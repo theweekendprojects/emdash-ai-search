@@ -50,6 +50,11 @@ export async function loadSettings(ctx: Ctx): Promise<SearchSettings> {
     embeddingModel: await get("embeddingModel", DEFAULT_SETTINGS.embeddingModel),
     vectorTopK: Number(await get("vectorTopK", DEFAULT_SETTINGS.vectorTopK)),
     chatTopK: Number(await get("chatTopK", DEFAULT_SETTINGS.chatTopK)),
+    // Security settings
+    chatRateLimitPerMin: Number(await get("chatRateLimitPerMin", DEFAULT_SETTINGS.chatRateLimitPerMin)),
+    chatRateLimitPerDay: Number(await get("chatRateLimitPerDay", DEFAULT_SETTINGS.chatRateLimitPerDay)),
+    enableTurnstile: (await get<boolean>("enableTurnstile", DEFAULT_SETTINGS.enableTurnstile)) === true,
+    turnstileSiteKey: await get("turnstileSiteKey", DEFAULT_SETTINGS.turnstileSiteKey),
   };
 }
 
@@ -77,6 +82,11 @@ export async function onInstall(ctx: Ctx): Promise<void> {
     "settings:embeddingModel": DEFAULT_SETTINGS.embeddingModel,
     "settings:vectorTopK": DEFAULT_SETTINGS.vectorTopK,
     "settings:chatTopK": DEFAULT_SETTINGS.chatTopK,
+    // Security settings
+    "settings:chatRateLimitPerMin": DEFAULT_SETTINGS.chatRateLimitPerMin,
+    "settings:chatRateLimitPerDay": DEFAULT_SETTINGS.chatRateLimitPerDay,
+    "settings:enableTurnstile": DEFAULT_SETTINGS.enableTurnstile,
+    "settings:turnstileSiteKey": DEFAULT_SETTINGS.turnstileSiteKey,
   };
   for (const [k, v] of Object.entries(defaults)) {
     if ((await ctx.kv.get(k)) === null) await ctx.kv.set(k, v);
@@ -118,21 +128,82 @@ export async function routeSearch(ctx: Ctx, factory: BackendFactory, body: Recor
   return backend.search(query, body.filters as any, body.limit as number | undefined);
 }
 
+/**
+ * Chat endpoint with security hardening:
+ * - Origin/Referer validation (403 if not allowed)
+ * - Per-IP rate limiting (429 if exceeded)
+ * - Optional Turnstile verification
+ */
 export async function routeChat(ctx: Ctx, factory: BackendFactory, body: Record<string, unknown>) {
+  const settings = await loadSettings(ctx);
+
+  // NOTE: EmDash wraps every route return in `{ success: true, data: <value> }`
+  // and serves it with the route's *successful* HTTP status — a sandboxed/native
+  // route CANNOT choose 403/429 by returning a `status` field (verified against
+  // the EmDash API-routes contract). So we return a stable application-level
+  // `{ error, code }` that the widget detects, rather than a fake `status`.
+
+  // Layer 1: Origin/Referer validation (belt-and-braces; core CSRF already 403s
+  // cross-origin callers before we get here).
+  if (!validateOrigin(ctx)) {
+    return { error: "This chat only works from the site itself.", code: "FORBIDDEN_ORIGIN" };
+  }
+
+  // Layer 2: Rate limiting
+  const rateLimitResult = await checkRateLimit(ctx, settings);
+  if (rateLimitResult.exceeded) {
+    return { error: "Too many requests — please slow down.", code: "RATE_LIMITED" };
+  }
+
+  // Layer 3: Turnstile verification (opt-in)
+  if (settings.enableTurnstile) {
+    const turnstileResult = await verifyTurnstile(ctx, settings);
+    if (!turnstileResult.verified) {
+      return { error: "Verification failed.", code: "TURNSTILE_FAILED" };
+    }
+  }
+
   const question = String(body.question ?? body.query ?? "").trim();
-  if (!question) return { error: "question required" };
+  if (!question) return { error: "question required", code: "BAD_REQUEST" };
   const backend = await backendFor(ctx, factory);
   return backend.chat(question, body.filters as any);
 }
 
 /**
- * NATIVE-ONLY streaming chat. Returns a real SSE `Response` (`data: {delta}` +
+ * Native-only streaming chat. Returns a real SSE `Response` (`data: {delta}` +
  * `[DONE]`). Do NOT wire this into a sandboxed route — the sandbox bridge wraps
  * route results in a JSON envelope and refuses raw Responses (per EmDash docs),
  * so streaming only works from the host isolate (native mode). Falls back to a
  * single JSON `data:` event if the backend can't stream.
  */
 export async function routeChatStream(ctx: Ctx, factory: BackendFactory, body: Record<string, unknown>): Promise<Response> {
+  const settings = await loadSettings(ctx);
+
+  // Layer 1: Origin/Referer validation (see routeChat note).
+  if (!validateOrigin(ctx)) {
+    return sseResponse(async function* () {
+      yield JSON.stringify({ error: "This chat only works from the site itself." });
+    });
+  }
+
+  // Layer 2: Rate limiting
+  const rateLimitResult = await checkRateLimit(ctx, settings);
+  if (rateLimitResult.exceeded) {
+    return sseResponse(async function* () {
+      yield JSON.stringify({ error: "Too many requests — please slow down." });
+    });
+  }
+
+  // Layer 3: Turnstile verification (opt-in)
+  if (settings.enableTurnstile) {
+    const turnstileResult = await verifyTurnstile(ctx, settings);
+    if (!turnstileResult.verified) {
+      return sseResponse(async function* () {
+        yield JSON.stringify({ error: "Verification failed." });
+      });
+    }
+  }
+
   const question = String(body.question ?? body.query ?? "").trim();
   if (!question) {
     return sseResponse(async function* () {
@@ -153,6 +224,174 @@ export async function routeChatStream(ctx: Ctx, factory: BackendFactory, body: R
       yield JSON.stringify({ delta: r.answer });
     }
   });
+}
+
+/**
+ * Validate Origin/Referer against the site origin (defence in depth).
+ *
+ * NOTE: EmDash core already rejects cross-origin requests to public plugin
+ * routes with a CSRF_REJECTED 403 *before* this handler runs (verified live:
+ * a forged `Origin` on /chat and /search both 403 at the core layer). This
+ * function is a belt-and-braces second check, so it MUST fail OPEN whenever the
+ * request/site metadata is missing or ambiguous — otherwise it would wrongly
+ * block the legitimate same-origin traffic that core already let through.
+ *
+ * The plugin context exposes headers as a plain `Record<string,string>` with
+ * lowercased keys (there is NO `.get()` — that was a bug), the request on
+ * `ctx.request`, and the site on `ctx.site` (NOT `ctx.env.site`).
+ */
+function validateOrigin(ctx: Ctx): boolean {
+  const site = (ctx as any).site ?? ctx.env?.site;
+  const siteUrl: string | undefined = site?.url;
+  if (!siteUrl) return true; // No site config → allow (fail open).
+
+  let allowedOrigin: string;
+  try {
+    allowedOrigin = new URL(siteUrl).origin;
+  } catch {
+    return true; // Unparseable site url → don't block.
+  }
+
+  const headers = (ctx as any).request?.headers as Record<string, string> | undefined;
+  if (!headers) return true; // No headers surface → fail open.
+
+  const readHeader = (name: string): string | undefined => {
+    if (typeof (headers as any).get === "function") return (headers as any).get(name) ?? undefined; // tolerate a real Headers instance
+    return headers[name] ?? headers[name.toLowerCase()];
+  };
+
+  const origin = readHeader("origin");
+  const referer = readHeader("referer");
+
+  // If neither header is present, this is likely a same-origin or
+  // server-to-server call that core already vetted — allow.
+  if (!origin && !referer) return true;
+
+  for (const candidate of [origin, referer]) {
+    if (!candidate) continue;
+    try {
+      if (new URL(candidate).origin === allowedOrigin) return true;
+    } catch {
+      // ignore invalid header value
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Best-effort client IP for rate-limit bucketing. requestMeta shape isn't
+ * strictly documented, so probe common fields and fall back to the
+ * cf-connecting-ip header (Cloudflare) before "unknown".
+ */
+function clientIp(ctx: Ctx): string {
+  const meta = (ctx as any).requestMeta ?? {};
+  const fromMeta = meta.ip || meta.remoteAddress || meta.clientIp || meta.cf?.ip;
+  if (fromMeta) return String(fromMeta);
+  const headers = (ctx as any).request?.headers as Record<string, string> | undefined;
+  if (headers) {
+    const h =
+      headers["cf-connecting-ip"] || headers["x-real-ip"] || headers["x-forwarded-for"];
+    if (h) return String(h).split(",")[0].trim();
+  }
+  return (ctx as any).ip || "unknown";
+}
+
+/** Check per-IP rate limit (Layer 2 security). */
+async function checkRateLimit(ctx: Ctx, settings: SearchSettings): Promise<{ exceeded: boolean }> {
+  try {
+    const ip = clientIp(ctx);
+    const storage = ctx.storage?.rate_limit;
+    if (!storage) {
+      // Storage collection not provisioned (descriptor/manifest mismatch). Don't
+      // crash the request; log so the misconfiguration is visible.
+      ctx.log.warn("[ai-search] rate_limit storage missing — skipping rate limit");
+      return { exceeded: false };
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    const minuteWindowStart = Math.floor(now / 60) * 60;
+    const dailyWindowStart = Math.floor(now / 86400) * 86400;
+
+    const storageKey = `rate:${ip}`;
+
+    // NOTE: we intentionally use plain get()/put() rather than the
+    // getVersioned()/compareAndSet() conditional-write API. Although the EmDash
+    // docs list those methods, they are NOT present on the deployed core
+    // (verified live: "TypeError: storage.getVersioned is not a function" on
+    // every request → the limiter used to fail open and never trip). get()/put()
+    // exist on every version. The tiny race window under burst concurrency is an
+    // acceptable trade for a soft anti-abuse limit.
+    const record = ((await storage.get(storageKey)) as any) || {};
+    let minuteCount = record.minuteWindowStart === minuteWindowStart ? record.minuteCount || 0 : 0;
+    let dailyCount = record.dailyWindowStart === dailyWindowStart ? record.dailyCount || 0 : 0;
+
+    minuteCount++;
+    dailyCount++;
+
+    if (minuteCount > settings.chatRateLimitPerMin || dailyCount > settings.chatRateLimitPerDay) {
+      // Persist the incremented counters so the limit stays tripped for the window.
+      await storage.put(storageKey, {
+        ip,
+        minuteCount,
+        minuteWindowStart,
+        dailyCount,
+        dailyWindowStart,
+        lastRequestAt: now,
+      });
+      return { exceeded: true };
+    }
+
+    await storage.put(storageKey, {
+      ip,
+      minuteCount,
+      minuteWindowStart,
+      dailyCount,
+      dailyWindowStart,
+      lastRequestAt: now,
+    });
+  } catch (err) {
+    ctx.log.warn("[ai-search] rate limit check failed", { err: String(err) });
+    // Fail open on rate limit errors (don't block legitimate requests)
+  }
+
+  return { exceeded: false };
+}
+
+/** Verify Turnstile token (Layer 3 security, opt-in). */
+async function verifyTurnstile(ctx: Ctx, settings: SearchSettings): Promise<{ verified: boolean }> {
+  try {
+    const body = (ctx as any).input as Record<string, unknown>;
+    const token = body?.turnstileToken as string;
+
+    if (!token) {
+      return { verified: false };
+    }
+
+    // Call Cloudflare Turnstile verify API
+    const response = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        // NB: siteverify requires the Turnstile *secret* key, not the site key.
+        // This reuses turnstileSiteKey for now (Turnstile is off by default and
+        // untested end-to-end) — see review notes / README before enabling.
+        secret: settings.turnstileSiteKey,
+        response: token,
+        remoteip: clientIp(ctx),
+      }),
+    });
+
+    if (!response.ok) {
+      return { verified: false };
+    }
+
+    const result = await response.json();
+    return { verified: result.success === true };
+  } catch (err) {
+    ctx.log.warn("[ai-search] turnstile verification failed", { err: String(err) });
+    return { verified: false };
+  }
 }
 
 /** Wrap an async generator of JSON payload strings as an SSE Response. */

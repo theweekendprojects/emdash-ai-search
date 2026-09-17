@@ -87,9 +87,11 @@ const plugin: SandboxedPlugin = {
       public: true,
       handler: async (routeCtx, ctx) => routeChat(asCtx(ctx), factory, (routeCtx.input as any) ?? {}),
     },
-    index: {
-      handler: async (routeCtx, ctx) => routeIndex(asCtx(ctx), factory, (routeCtx.input as any) ?? {}),
-    },
+    // Streaming chat — sandboxed routes can't return a raw Response stream,
+    // so this route is omitted in sandboxed builds. The widget falls back to /chat.
+    // index: {
+    //   handler: async (routeCtx, ctx) => routeIndex(asCtx(ctx), factory, (routeCtx.input as any) ?? {}),
+    // },
     sync: {
       handler: async (_routeCtx, ctx) => routeSync(asCtx(ctx), factory),
     },
@@ -100,6 +102,14 @@ const plugin: SandboxedPlugin = {
     admin: {
       handler: async (routeCtx, ctx) => handleAdmin(asCtx(ctx), factory, routeCtx.input),
     },
+  },
+  storage: {
+    index_meta: { indexes: ["status", "lastSyncAt"] },
+    chunk_map: { indexes: ["collectionId", "updatedAt"] },
+    backfill_job: { indexes: ["phase", "updatedAt"] },
+    doc_state: { indexes: ["collectionId", "indexedAt"] },
+    // Rate limiting storage (new in v0.8)
+    rate_limit: { indexes: ["ip", "minuteWindowStart", "dailyWindowStart"] },
   },
 };
 

@@ -107,4 +107,5 @@ export interface Ctx {
   content?: ContentAccess; // present with content:read
   http?: HttpAccess; // present with network:request
   cron?: CronAccess; // present in cron-capable runtime
+  env?: { site?: { url: string } }; // Cloudflare bindings (native only)
 }

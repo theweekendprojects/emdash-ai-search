@@ -181,6 +181,48 @@ async function render(ctx: Ctx, factory: BackendFactory, toast?: Blocks["toast"]
     },
   );
 
+  // ── Security settings ───────────────────────────────────────────────────────
+  blocks.push({ type: "divider" });
+  blocks.push({ type: "header", text: "Security settings" });
+  blocks.push({
+    type: "context",
+    text:
+      "Rate limiting and optional Turnstile verification for public chat endpoints. " +
+      "Note: endpoints are public by necessity; these settings cap abuse but don't make them private.",
+  });
+
+  fields.push(
+    {
+      type: "number_input",
+      action_id: "chatRateLimitPerMin",
+      label: "Chat rate limit: per minute",
+      min: 1,
+      max: 60,
+      initial_value: settings.chatRateLimitPerMin,
+    },
+    {
+      type: "number_input",
+      action_id: "chatRateLimitPerDay",
+      label: "Chat rate limit: per day",
+      min: 10,
+      max: 1000,
+      initial_value: settings.chatRateLimitPerDay,
+    },
+    {
+      type: "toggle",
+      action_id: "enableTurnstile",
+      label: "Require Cloudflare Turnstile verification",
+      initial_value: (await ctx.kv.get<boolean>("settings:enableTurnstile")) === true,
+    },
+    {
+      type: "text_input",
+      action_id: "turnstileSiteKey",
+      label: "Turnstile site key (required if enabled)",
+      initial_value: settings.turnstileSiteKey,
+      condition: { field: "enableTurnstile", eq: true },
+    },
+  );
+
   blocks.push({ type: "form", block_id: "settings", fields, submit: { label: "Save settings", action_id: "save_settings" } });
 
   // ── Backfill (resumable, cron-drained) ──────────────────────────────────────
@@ -357,6 +399,11 @@ async function saveSettings(ctx: Ctx, v: Record<string, unknown>): Promise<void>
   await ctx.kv.set("settings:indexDrafts", v.indexDrafts === true);
   await setIf("chatModel", v.chatModel);
   await setIf("maxTokens", Number(v.maxTokens ?? 512));
+  // Security settings
+  await setIf("chatRateLimitPerMin", Number(v.chatRateLimitPerMin ?? 15));
+  await setIf("chatRateLimitPerDay", Number(v.chatRateLimitPerDay ?? 150));
+  await ctx.kv.set("settings:enableTurnstile", v.enableTurnstile === true);
+  await setIf("turnstileSiteKey", v.turnstileSiteKey);
 }
 
 function normalizeCollections(input: unknown): string {

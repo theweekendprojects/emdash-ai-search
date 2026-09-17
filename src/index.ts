@@ -31,14 +31,18 @@ export function aiSearch(options: AiSearchOptions = {}): PluginDescriptor<AiSear
     //                       the content lifecycle hooks (afterPublish, etc.)
     //   - network:request → reserved for the sandboxed REST path; harmless here.
     capabilities: ["content:read", "network:request"],
-    allowedHosts: ["api.cloudflare.com"],
-    // Plugin-scoped storage collections (provisioned by the host). Same set the
-    // sandboxed manifest declares.
+    // challenges.cloudflare.com is needed for the optional Turnstile verify call.
+    allowedHosts: ["api.cloudflare.com", "challenges.cloudflare.com"],
+    // Plugin-scoped storage collections (provisioned by the host). MUST match the
+    // set declared in definePlugin() (native.ts) and the sandboxed manifest
+    // (plugin.ts) — including rate_limit, or ctx.storage.rate_limit is undefined
+    // at runtime and rate limiting silently fails open.
     storage: {
       index_meta: { indexes: ["status", "lastSyncAt"] },
       chunk_map: { indexes: ["collectionId", "updatedAt"] },
       backfill_job: { indexes: ["phase", "updatedAt"] },
       doc_state: { indexes: ["collectionId", "indexedAt"] },
+      rate_limit: { indexes: ["ip", "minuteWindowStart", "dailyWindowStart"] },
     },
     adminPages: [{ path: "/", label: "AI Search", icon: "magnifying-glass" }],
     adminWidgets: [{ id: "ai-search-status", title: "AI Search Index", size: "half" }],

@@ -1,20 +1,23 @@
 ---
 /**
- * AI search chat widget — self-contained, dependency-free.
+ * AI search chat widget — powered by Deep Chat (MIT, framework-agnostic web
+ * component, https://deepchat.dev).
  *
- * Renders a floating chat button + panel that POSTs to the plugin's public
- * `chat` route and shows grounded answers with citations. No fetch code for the
- * site author: drop the block in the editor (or <ChatWidget /> in a template)
- * and it works.
+ * Renders a Deep Chat element wired to the plugin's public `chat` / `chat/stream`
+ * routes via a custom `connect.handler`, mapping our `{answer, citations}` (and
+ * SSE `{delta}` / `{citations}` events) onto Deep Chat's `signals` API. In
+ * "floating" mode we wrap the element in our own launcher button + panel (Deep
+ * Chat has no native floating launcher).
  *
  * Props (from a Portable Text block `Astro.props.node`, or passed directly):
  *   - title        panel header (default "Ask about this site")
- *   - placeholder  input placeholder
- *   - welcome      first assistant bubble
- *   - collections  optional string[] to scope retrieval (maps to chat filters)
- *   - accent       accent color
+ *   - placeholder  input placeholder            → Deep Chat textInput.placeholder
+ *   - welcome      first assistant bubble        → Deep Chat introMessage
+ *   - collections  optional string[] to scope retrieval (→ chat `filters`)
+ *   - accent       accent color (hex)
  *   - mode         "floating" (default) | "inline"
  *   - endpoint     override the chat route (default the plugin's public route)
+ *   - streamEndpoint override the streaming route (default {endpoint}/stream)
  */
 const node = (Astro.props as any).node ?? Astro.props ?? {};
 const title: string = node.title ?? "Ask about this site";
@@ -23,6 +26,8 @@ const welcome: string = node.welcome ?? "Hi! Ask me anything about this site.";
 const accent: string = node.accent ?? "#465fff";
 const mode: "floating" | "inline" = node.mode === "inline" ? "inline" : "floating";
 const endpoint: string = node.endpoint ?? "/_emdash/api/plugins/ai-search/chat";
+const streamEndpoint: string =
+  node.streamEndpoint ?? (endpoint.endsWith("/chat") ? endpoint + "/stream" : endpoint + "/chat/stream");
 
 // collections may arrive as a JSON string (from a text_input field) or array.
 let collections: string[] = [];
@@ -30,27 +35,30 @@ if (Array.isArray(node.collections)) collections = node.collections.map(String);
 else if (typeof node.collections === "string" && node.collections.trim()) {
   try {
     const p = JSON.parse(node.collections);
-    collections = Array.isArray(p) ? p.map(String) : node.collections.split(",").map((s: string) => s.trim()).filter(Boolean);
+    collections = Array.isArray(p)
+      ? p.map(String)
+      : node.collections.split(",").map((s: string) => s.trim()).filter(Boolean);
   } catch {
     collections = node.collections.split(",").map((s: string) => s.trim()).filter(Boolean);
   }
 }
-
-// Streaming endpoint (native builds only). Derived from `endpoint` unless the
-// caller overrides it. The widget tries this first and falls back to `endpoint`
-// (single-response) if it 404s or doesn't stream — so it works in both modes.
-const streamEndpoint: string = node.streamEndpoint ?? endpoint.replace(/\/chat$/, "/chat/stream");
 
 // A unique id lets multiple widgets coexist on one page.
 const uid = "aisearch-chat-" + Math.random().toString(36).slice(2, 10);
 const config = JSON.stringify({ endpoint, streamEndpoint, collections });
 ---
 
+<!-- Load the Deep Chat custom element (client side, bundled by the site). -->
+<script>
+  import "deep-chat";
+</script>
+
 <div
   class:list={["aisearch-chat", mode === "inline" ? "aisearch-chat--inline" : "aisearch-chat--floating"]}
-  id={uid}
+  id={uid + "-root"}
+  data-uid={uid}
   data-config={config}
-  style={`--aisearch-chat-accent:${accent}`}
+  style={`--aisearch-accent:${accent}`}
 >
   {mode === "floating" && (
     <button type="button" class="aisearch-chat__launch" aria-label="Open chat" data-role="launch">
@@ -65,170 +73,325 @@ const config = JSON.stringify({ endpoint, streamEndpoint, collections });
         <button type="button" class="aisearch-chat__close" aria-label="Close chat" data-role="close">✕</button>
       )}
     </div>
-
-    <div class="aisearch-chat__log" data-role="log" aria-live="polite">
-      <div class="aisearch-chat__msg aisearch-chat__msg--bot">{welcome}</div>
-    </div>
-
-    <form class="aisearch-chat__form" data-role="form">
-      <input
-        type="text"
-        class="aisearch-chat__input"
-        data-role="input"
-        placeholder={placeholder}
-        autocomplete="off"
-        aria-label="Your question"
-      />
-      <button type="submit" class="aisearch-chat__send" data-role="send">Send</button>
-    </form>
+    <!-- deep-chat is constructed in JS (see script) so `connect` is set BEFORE
+         the element upgrades — otherwise Deep Chat starts in demo mode. -->
+    <div class="aisearch-chat__mount" data-role="mount"
+      data-welcome={welcome}
+      data-placeholder={placeholder}
+      data-accent={accent}
+    ></div>
   </div>
 </div>
 
-<style>
-  .aisearch-chat { --aisearch-chat-accent: #465fff; font-family: system-ui, sans-serif; }
-  .aisearch-chat--floating { position: fixed; right: 20px; bottom: 20px; z-index: 9999; }
-  .aisearch-chat__launch {
-    width: 56px; height: 56px; border-radius: 50%; border: none; cursor: pointer;
-    background: var(--aisearch-chat-accent); color: #fff; font-size: 24px; box-shadow: 0 4px 16px rgba(0,0,0,.2);
-  }
-  .aisearch-chat__panel {
-    display: flex; flex-direction: column; width: 360px; max-width: calc(100vw - 40px);
-    height: 480px; max-height: calc(100vh - 120px);
-    background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; overflow: hidden;
-    box-shadow: 0 8px 32px rgba(0,0,0,.18);
-  }
-  .aisearch-chat--floating .aisearch-chat__panel { position: fixed; right: 20px; bottom: 88px; }
-  .aisearch-chat--inline .aisearch-chat__panel { position: relative; width: 100%; height: 520px; }
-  .aisearch-chat__header {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 12px 14px; background: var(--aisearch-chat-accent); color: #fff; font-weight: 600; font-size: 14px;
-  }
-  .aisearch-chat__close { background: transparent; border: none; color: #fff; cursor: pointer; font-size: 16px; }
-  .aisearch-chat__log { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; background: #fbfaf6; }
-  .aisearch-chat__msg { padding: 9px 12px; border-radius: 12px; font-size: 14px; line-height: 1.45; max-width: 85%; white-space: pre-wrap; }
-  .aisearch-chat__msg--bot { background: #fff; border: 1px solid #e5e7eb; align-self: flex-start; }
-  .aisearch-chat__msg--user { background: var(--aisearch-chat-accent); color: #fff; align-self: flex-end; }
-  .aisearch-chat__cite { font-size: 11px; color: #6b7280; align-self: flex-start; margin-top: -4px; }
-  .aisearch-chat__cite a { color: #6b7280; }
-  .aisearch-chat__form { display: flex; gap: 8px; padding: 10px; border-top: 1px solid #e5e7eb; background: #fff; }
-  .aisearch-chat__input { flex: 1; padding: 9px 12px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px; }
-  .aisearch-chat__send { padding: 9px 14px; border: none; border-radius: 8px; background: var(--aisearch-chat-accent); color: #fff; cursor: pointer; font-size: 14px; }
-  .aisearch-chat__send:disabled { opacity: .6; cursor: default; }
-</style>
-
+<!--
+  Deep Chat wiring. This runs in the BROWSER verbatim (define:vars forces
+  is:inline), so it MUST be plain JavaScript — no TypeScript annotations.
+-->
 <script is:inline define:vars={{ uid }}>
   (function () {
-    const root = document.getElementById(uid);
+    var root = document.getElementById(uid + "-root");
     if (!root) return;
-    const cfg = JSON.parse(root.getAttribute("data-config") || "{}");
-    const endpoint = cfg.endpoint;
-    const streamEndpoint = cfg.streamEndpoint;
-    const collections = Array.isArray(cfg.collections) ? cfg.collections : [];
+    var mount = root.querySelector('[data-role="mount"]');
+    if (!mount) return;
 
-    const q = (sel) => root.querySelector(`[data-role="${sel}"]`);
-    const panel = q("panel"), log = q("log"), form = q("form"), input = q("input"), send = q("send");
-    const launch = q("launch"), close = q("close");
-    const isFloating = root.classList.contains("aisearch-chat--floating");
+    var cfg = {};
+    try {
+      cfg = JSON.parse(root.getAttribute("data-config") || "{}");
+    } catch (e) {
+      cfg = {};
+    }
+    var endpoint = cfg.endpoint;
+    var streamEndpoint = cfg.streamEndpoint;
+    var collections = Array.isArray(cfg.collections) ? cfg.collections : [];
 
-    function show() { if (panel) panel.hidden = false; if (launch) launch.style.display = "none"; }
-    function hide() { if (panel) panel.hidden = true; if (launch) launch.style.display = ""; }
-    if (launch) launch.addEventListener("click", show);
+    // Floating launcher open/close/toggle.
+    var launch = root.querySelector('[data-role="launch"]');
+    var close = root.querySelector('[data-role="close"]');
+    var panel = root.querySelector('[data-role="panel"]');
+    function open() {
+      if (panel) panel.hidden = false;
+      root.classList.add("is-open");
+    }
+    function hide() {
+      if (panel) panel.hidden = true;
+      root.classList.remove("is-open");
+    }
+    if (launch) launch.addEventListener("click", function () {
+      if (panel && panel.hidden) open();
+      else hide();
+    });
     if (close) close.addEventListener("click", hide);
 
-    function bubble(text, who) {
-      const el = document.createElement("div");
-      el.className = "aisearch-chat__msg aisearch-chat__msg--" + who;
-      el.textContent = text;
-      log.appendChild(el);
-      log.scrollTop = log.scrollHeight;
-      return el;
-    }
-    function citations(list) {
-      if (!list || !list.length) return;
-      const el = document.createElement("div");
-      el.className = "aisearch-chat__cite";
-      el.textContent = "Sources: " + list.map((c) => c.title).filter(Boolean).join(", ");
-      log.appendChild(el);
-      log.scrollTop = log.scrollHeight;
-    }
-
-    // Try SSE streaming (native builds); return true on success, false to fall back.
-    async function tryStream(body, thinking) {
-      if (!streamEndpoint) return false;
-      let res;
-      try {
-        res = await fetch(streamEndpoint, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
-          body: JSON.stringify(body),
-        });
-      } catch {
-        return false;
-      }
-      const ctype = res.headers.get("content-type") || "";
-      // Not a stream (sandboxed build wraps JSON, or route missing) → fall back.
-      if (!res.ok || !res.body || !ctype.includes("text/event-stream")) return false;
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = "", acc = "";
-      thinking.textContent = "";
-      for (;;) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        let i;
-        while ((i = buf.indexOf("\n\n")) !== -1) {
-          const evt = buf.slice(0, i); buf = buf.slice(i + 2);
-          const line = evt.split("\n").find((l) => l.startsWith("data:"));
-          if (!line) continue;
-          const payload = line.slice(5).trim();
-          if (payload === "[DONE]") { return true; }
-          try {
-            const obj = JSON.parse(payload);
-            if (obj.delta) { acc += obj.delta; thinking.textContent = acc; log.scrollTop = log.scrollHeight; }
-            else if (obj.error) { thinking.textContent = obj.error; return true; }
-          } catch { /* ignore keep-alive/non-json */ }
+    // Pull the latest user text out of Deep Chat's request body
+    // ({messages: [{role, text}, ...]}).
+    function questionFrom(body) {
+      var msgs = body && body.messages;
+      if (!Array.isArray(msgs) || msgs.length === 0) return "";
+      for (var i = msgs.length - 1; i >= 0; i--) {
+        if (msgs[i] && typeof msgs[i].text === "string" && msgs[i].text.trim()) {
+          return msgs[i].text.trim();
         }
       }
-      // If nothing streamed, treat as failure so we fall back.
-      return acc.length > 0;
+      return "";
     }
 
-    // Single-response fallback (sandboxed build, or if streaming unavailable).
-    async function single(body, thinking) {
-      try {
-        const res = await fetch(endpoint, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
+    function citationsMarkdown(citations) {
+      if (!Array.isArray(citations) || citations.length === 0) return "";
+      var parts = citations
+        .filter(function (c) { return c && c.title; })
+        .map(function (c) { return String(c.title); });
+      if (parts.length === 0) return "";
+      return "\n\nSources: " + parts.join(", ");
+    }
+
+    // Attempt SSE streaming; returns true if it produced output, false to fall back.
+    function tryStream(reqBody, signals) {
+      if (!streamEndpoint) return Promise.resolve(false);
+      return fetch(streamEndpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+        body: JSON.stringify(reqBody),
+      }).then(function (res) {
+        var ctype = res.headers.get("content-type") || "";
+        if (!res.ok || !res.body || ctype.indexOf("text/event-stream") === -1) return false;
+
+        signals.onOpen();
+        var reader = res.body.getReader();
+        var decoder = new TextDecoder();
+        var buf = "";
+        var produced = false;
+
+        function pump() {
+          return reader.read().then(function (r) {
+            if (r.done) return produced;
+            buf += decoder.decode(r.value, { stream: true });
+            var idx;
+            while ((idx = buf.indexOf("\n\n")) !== -1) {
+              var evt = buf.slice(0, idx);
+              buf = buf.slice(idx + 2);
+              var dataLine = null;
+              var lines = evt.split("\n");
+              for (var i = 0; i < lines.length; i++) {
+                if (lines[i].indexOf("data:") === 0) { dataLine = lines[i]; break; }
+              }
+              if (!dataLine) continue;
+              var payload = dataLine.slice(5).trim();
+              if (payload === "[DONE]") { return produced; }
+              try {
+                var obj = JSON.parse(payload);
+                if (obj.delta) {
+                  produced = true;
+                  signals.onResponse({ text: obj.delta }); // stream mode appends
+                } else if (obj.citations) {
+                  var md = citationsMarkdown(obj.citations);
+                  if (md) { produced = true; signals.onResponse({ text: md }); }
+                } else if (obj.error) {
+                  signals.onResponse({ error: String(obj.error) });
+                  return true;
+                }
+              } catch (e) {
+                // ignore keep-alives / non-JSON frames
+              }
+            }
+            return pump();
+          });
+        }
+        return pump();
+      }).catch(function () {
+        return false;
+      });
+    }
+
+    // Non-streaming fallback: POST /chat, map {answer, citations}.
+    function singleResponse(reqBody, signals) {
+      return fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(reqBody),
+      }).then(function (res) {
+        return res.json().catch(function () { return {}; }).then(function (json) {
+          // EmDash wraps route results as { success, data }.
+          var payload = json && json.data ? json.data : json;
+          if (!res.ok || (json && json.success === false)) {
+            var msg =
+              (payload && payload.error && (payload.error.message || payload.error)) ||
+              (res.status === 429 ? "Too many requests — please slow down." :
+               res.status === 403 ? "This chat only works from the site itself." :
+               "Sorry, something went wrong.");
+            signals.onResponse({ error: String(msg) });
+            return;
+          }
+          if (payload && payload.answer) {
+            signals.onResponse({ text: payload.answer + citationsMarkdown(payload.citations) });
+          } else if (payload && payload.error) {
+            signals.onResponse({ error: String(payload.error.message || payload.error) });
+          } else {
+            signals.onResponse({ error: "Sorry, something went wrong." });
+          }
         });
-        const data = await res.json().catch(() => ({}));
-        const payload = data && data.data ? data.data : data; // tolerate { success, data }
-        thinking.textContent = payload && payload.answer ? payload.answer : (payload && payload.error) || "Sorry, something went wrong.";
-        if (payload && payload.citations) citations(payload.citations);
-      } catch {
-        thinking.textContent = "Network error — please try again.";
-      }
+      }).catch(function () {
+        signals.onResponse({ error: "Network error — please try again." });
+      });
     }
 
-    form.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const question = (input.value || "").trim();
-      if (!question) return;
-      bubble(question, "user");
-      input.value = "";
-      send.disabled = true;
-      const thinking = bubble("…", "bot");
-      try {
-        const body = { question };
-        if (collections.length) body.filters = { collections };
-        const streamed = await tryStream(body, thinking);
-        if (!streamed) await single(body, thinking);
-      } finally {
-        send.disabled = false;
-        input.focus();
-      }
-    });
+    // Deep Chat v1.x uses the `request` property (with a `handler`) plus a
+    // separate top-level `stream` property. (The `connect` property in the
+    // current deepchat.dev docs is a newer API not present in v1.4.x — using it
+    // leaves the component in demo mode. Verified against the installed
+    // custom-elements.json: fields are `request` + `stream`, no `connect`.)
+    var requestConfig = {
+      handler: function (body, signals) {
+        var question = questionFrom(body);
+        if (!question) {
+          signals.onResponse({ error: "Please type a question." });
+          return;
+        }
+        var reqBody = { question: question };
+        if (collections.length) reqBody.filters = { collections: collections };
+
+        tryStream(reqBody, signals)
+          .then(function (streamed) {
+            if (streamed) {
+              signals.onClose();
+              return;
+            }
+            // Streaming unavailable/empty → single-shot request.
+            return singleResponse(reqBody, signals).then(function () {
+              signals.onClose();
+            });
+          })
+          .catch(function () {
+            signals.onResponse({ error: "Sorry, something went wrong." });
+            signals.onClose();
+          });
+      },
+    };
+
+    // Build the deep-chat element in JS and set `request`/`stream` + config
+    // BEFORE it is appended/upgraded. Deep Chat binds its message service at
+    // upgrade; reassigning request afterwards is ignored and it stays in demo
+    // mode. Constructing it here guarantees the request handler wins.
+    function mountChat() {
+      var chat = document.createElement("deep-chat");
+      chat.id = uid;
+      chat.className = "aisearch-chat__deepchat";
+      chat.request = requestConfig;
+      // Real SSE streaming does not survive EmDash's route layer (it wraps the
+      // raw Response into a JSON envelope, so the stream body is lost — verified
+      // live: /chat/stream returns application/json {"success":true,"data":{}}).
+      // So we fetch the single /chat response in the handler and let Deep Chat
+      // *simulate* streaming for a progressive typing effect.
+      chat.stream = { simulation: true };
+      chat.introMessage = { text: mount.getAttribute("data-welcome") || "" };
+      chat.textInput = { placeholder: { text: mount.getAttribute("data-placeholder") || "" } };
+      var accent = mount.getAttribute("data-accent") || "#465fff";
+      chat.style.cssText =
+        "--deep-chat-accent-color:" + accent +
+        ";border:none;width:100%;height:100%;background-color:transparent;";
+      mount.appendChild(chat);
+    }
+    if (window.customElements && customElements.whenDefined) {
+      customElements.whenDefined("deep-chat").then(mountChat);
+    } else {
+      mountChat();
+    }
   })();
 </script>
+
+<style>
+  .aisearch-chat--floating {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    z-index: 9999;
+  }
+
+  .aisearch-chat__launch {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    border: none;
+    cursor: pointer;
+    background: var(--aisearch-accent, #465fff);
+    color: #fff;
+    font-size: 24px;
+    line-height: 1;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  }
+
+  .aisearch-chat--floating.is-open .aisearch-chat__launch {
+    display: none;
+  }
+
+  /* The `hidden` attribute must win over the `display:flex` panel rules below,
+     otherwise the (fixed-position) panel keeps intercepting clicks even when
+     "closed" and the launcher can't be reached. */
+  .aisearch-chat__panel[hidden] {
+    display: none !important;
+  }
+
+  .aisearch-chat--floating .aisearch-chat__panel {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    width: 360px;
+    max-width: calc(100vw - 40px);
+    height: 480px;
+    max-height: calc(100vh - 120px);
+    display: flex;
+    flex-direction: column;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+    border: 1px solid #e5e7eb;
+    background: #fff;
+  }
+
+  .aisearch-chat--inline .aisearch-chat__panel {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 520px;
+    border-radius: 12px;
+    overflow: hidden;
+    border: 1px solid #e5e7eb;
+    background: #fff;
+  }
+
+  .aisearch-chat__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 14px;
+    background: var(--aisearch-accent, #465fff);
+    color: #fff;
+    font-weight: 600;
+    font-size: 14px;
+    flex: 0 0 auto;
+  }
+
+  .aisearch-chat__close {
+    background: transparent;
+    border: none;
+    color: #fff;
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    padding: 2px 6px;
+  }
+
+  .aisearch-chat__mount {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+  }
+
+  .aisearch-chat__deepchat {
+    flex: 1 1 auto;
+    min-height: 0;
+    /* Readable colors on both light and dark host themes: the panel forces a
+       light surface, so keep Deep Chat text dark regardless of site theme. */
+    --deep-chat-text-color: #1f2937;
+    --deep-chat-background-color: #ffffff;
+  }
+</style>

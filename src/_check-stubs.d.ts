@@ -10,6 +10,7 @@ declare module "emdash/plugin" {
       string,
       { public?: boolean; handler: (routeCtx: any, ctx: any) => Promise<unknown> | unknown }
     >;
+    storage?: Record<string, { indexes?: (string | string[])[] }>;
   }
 }
 

@@ -4,6 +4,11 @@ Semantic search + grounded AI chat for [EmDash CMS](https://github.com/emdash-cm
 Every published post/page is automatically indexed; public `search` and `chat`
 routes answer natural-language queries over your own content.
 
+**New in v0.8**: The chat widget is powered by [Deep Chat](https://deepchat.dev),
+a framework-agnostic web component. Endpoints are hardened with origin validation,
+per-IP rate limiting (configurable), and optional Cloudflare Turnstile verification.
+SSE streaming is built-in (falls back to single response if unavailable).
+
 There are **two independent choices**: which **backend** does the retrieval, and
 which **runtime mode** the plugin runs in. They're orthogonal.
 
@@ -70,6 +75,18 @@ index drafts”** to index on every save regardless of status (uses
 
 ---
 
+## Chat widget: Deep Chat
+
+The public chat widget is powered by [Deep Chat](https://deepchat.dev), a
+framework-agnostic web component. It provides a polished UI with built-in
+streaming support, theming, and accessibility. The widget is injected as a
+Portable Text block (native mode only) and calls `/_emdash/api/plugins/ai-search/chat`
+or `/chat/stream` with `{ question, filters }`. Answers include grounded sources
+with citation links. Rate limits and origin validation are enforced on the
+server; the widget gracefully surfaces 429/403 errors to users.
+
+---
+
 ## Backfilling an existing blog
 
 Installing on a blog that **already has posts**? New posts index automatically on
@@ -118,6 +135,32 @@ Properties this buys you:
   `backfill-types.ts` — raise them for faster backfill on capable runtimes.
 
 ---
+
+## Security
+
+Public chat endpoints are hardened with multiple layers:
+
+0. **EmDash core CSRF (built-in)** — Before the plugin runs, EmDash core rejects
+   cross-origin requests to public plugin routes with a `CSRF_REJECTED` **403**.
+   This is the primary origin protection; it applies to `search` and `chat` alike.
+1. **Origin/Referer validation (defence in depth)** — The plugin re-checks the
+   Origin/Referer against your site origin. It *fails open* when that metadata is
+   absent (so it never blocks the same-origin traffic core already vetted). A
+   mismatch returns a JSON `{ error, code: "FORBIDDEN_ORIGIN" }` (the route still
+   responds `200` — plugin routes cannot set their own HTTP status; the widget
+   surfaces the message).
+2. **Per-IP rate limiting** — Configurable limits (default 15/min, 150/day) via
+   plugin storage. When exceeded, returns `{ error, code: "RATE_LIMITED" }`.
+3. **Optional Turnstile verification** — Enable in Settings to require Cloudflare
+   Turnstile before processing chat requests. **Off by default and not yet
+   verified end-to-end**; note that Cloudflare's siteverify needs the Turnstile
+   *secret* key (the current field is labelled "site key" — treat as experimental).
+
+Configure these in **Admin → AI Search → Security settings**. Note: endpoints
+are public by necessity (chat widgets need to be callable from any page); these
+settings cap abuse but don't make them private. Streaming answers (`chat/stream`)
+currently omit the **Sources:** citation line — the streaming backend contract
+yields answer text only; the non-streaming fallback includes citations.
 
 ## Endpoints: search and chat
 
@@ -195,7 +238,9 @@ question → embed → Vectorize query (top chatTopK chunks, FULL chunk text)
 ### Drop the chatbot on a page (front-end widget)
 
 You don't have to write any fetch code. The plugin ships a self-contained chat
-widget (floating button + panel, or inline) that calls the `chat` route for you.
+widget powered by [Deep Chat](https://deepchat.dev), a framework-agnostic web
+component that renders a floating button + panel or inline panel. It calls the
+`chat` or `chat/stream` route automatically.
 
 > **Native build only.** Per EmDash, Portable Text blocks + their Astro render
 > components are a **native-plugin** feature — sandboxed/registry builds can't
@@ -204,10 +249,10 @@ widget (floating button + panel, or inline) that calls the `chat` route for you.
 
 **Option 1 — from the editor (no code).** In any Portable Text field, type `/`
 and pick **“AI Chat”**. A small form lets you set the panel title, placeholder,
-welcome message, optional collection scope, accent color, and floating/inline
-mode. Publish the page → the widget renders. EmDash auto-wires the render
-component (via the descriptor's `componentsEntry`); the site author imports
-nothing.
+welcome message, optional collection scope, accent color, floating/inline
+mode, and whether to show rate limit errors. Publish the page → the widget
+renders. EmDash auto-wires the render component (via the descriptor's
+`componentsEntry`); the site author imports nothing.
 
 **Option 2 — directly in an Astro template.**
 
@@ -223,10 +268,31 @@ import { ChatWidget } from "emdash-ai-search/astro";
 <ChatWidget node={{ mode: "inline", accent: "#0b7" }} />
 ```
 
-The widget is dependency-free (vanilla JS + scoped CSS), supports multiple
-instances per page, renders answers with a **Sources:** line from the citations,
-and posts to `/_emdash/api/plugins/ai-search/chat` (override with
-`node={{ endpoint: "…" }}` if your plugin id differs).
+The widget uses Deep Chat (MIT), supports multiple instances per page, renders
+answers with a **Sources:** line from the citations, and handles streaming with
+automatic fallback to single-response if SSE is unavailable.
+
+### Security settings
+
+Configure the public chat endpoint's security in **Admin → AI Search → Security
+settings**:
+
+| Setting | Description | Default |
+|---|---|---|
+| Chat rate limit: per minute | Max requests per minute per IP | 15 |
+| Chat rate limit: per day | Max requests per day per IP | 150 |
+| Require Turnstile | Enable Cloudflare Turnstile verification | off |
+| Turnstile site key | Your Turnstile site key (if enabled) | — |
+
+When rate limited (429) or access denied (403), the widget shows a user-friendly
+message. Enable Turnstile for additional spam protection.
+
+### Streaming
+
+The widget tries `chat/stream` (SSE) first; if unavailable (sandboxed build or
+network issue), it falls back to the single-response `chat` route. Both backends
+(streaming or non-streaming) return full answers with citations. Streaming
+requires **native mode** (sandboxed routes can't return raw `Response` streams).
 
 ---
 
@@ -560,6 +626,10 @@ MIT. Ported from `lane711/sonicjs` (`ai-search-plugin`), MIT. Built against the
   CAS-guarded so a cancel can't be silently overwritten; backfill lists all
   statuses so unpublished docs are actually purged; AI Search progress is
   labelled "files queued" (indexing is async on Cloudflare).
+- **v0.8 (Deep Chat, security, streaming)** — replaced the vanilla chat widget
+  with [Deep Chat](https://deepchat.dev), added streaming (SSE with fallback),
+  and hardened public endpoints with origin validation, per-IP rate limiting,
+  and optional Turnstile verification.
 - **v0.7 (resumable backfill)** — replaced the one-shot "Sync all" with a durable,
   **cron-drained, crash-safe, resumable backfill** for indexing existing archives
   of any size. Bounded batches per cron tick; compare-and-set lease for

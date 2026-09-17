@@ -70,12 +70,14 @@ export function createPlugin() {
     // provisions storage. Declaring them only on the build-time descriptor is NOT
     // enough (that caused "Cannot read properties of undefined (reading 'kv')").
     capabilities: ["content:read", "network:request"],
-    allowedHosts: ["api.cloudflare.com"],
+    allowedHosts: ["api.cloudflare.com", "challenges.cloudflare.com"],
     storage: {
       index_meta: { indexes: ["status", "lastSyncAt"] },
       chunk_map: { indexes: ["collectionId", "updatedAt"] },
       backfill_job: { indexes: ["phase", "updatedAt"] },
       doc_state: { indexes: ["collectionId", "indexedAt"] },
+      // Rate limiting storage (new in v0.8)
+      rate_limit: { indexes: ["ip", "minuteWindowStart", "dailyWindowStart"] },
     },
 
     admin: {

@@ -45,6 +45,16 @@ export interface SearchSettings {
   embeddingModel: string;
   vectorTopK: number;
   chatTopK: number;
+
+  // ── Security settings (new in v0.8) ────────────────────────────────────────
+  /** Per-IP rate limit: requests per minute (default 15) */
+  chatRateLimitPerMin: number;
+  /** Per-IP rate limit: requests per day (default 150) */
+  chatRateLimitPerDay: number;
+  /** Optional: require Cloudflare Turnstile verification (default false) */
+  enableTurnstile: boolean;
+  /** Turnstile site key (required if enableTurnstile is true) */
+  turnstileSiteKey: string;
 }
 
 export const DEFAULT_SETTINGS: SearchSettings = {
@@ -61,6 +71,11 @@ export const DEFAULT_SETTINGS: SearchSettings = {
   embeddingModel: "@cf/baai/bge-base-en-v1.5",
   vectorTopK: 50,
   chatTopK: 6,
+  // Security defaults
+  chatRateLimitPerMin: 15,
+  chatRateLimitPerDay: 150,
+  enableTurnstile: false,
+  turnstileSiteKey: "",
 };
 
 export interface IndexStatusRecord {
@@ -124,4 +139,14 @@ export interface VectorMatch {
   id: string;
   score: number;
   metadata?: Record<string, unknown>;
+}
+
+/** Rate limit storage record: per-IP counters for chat endpoint abuse prevention. */
+export interface RateLimitRecord {
+  ip: string;
+  minuteCount: number;
+  minuteWindowStart: number; // Unix timestamp in seconds
+  dailyCount: number;
+  dailyWindowStart: number; // Unix timestamp in seconds (midnight UTC)
+  lastRequestAt: number;
 }
