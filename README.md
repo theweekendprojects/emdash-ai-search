@@ -1,6 +1,6 @@
-# @emdash/rag
+# emdash-ai-search
 
-Semantic search + RAG chat for [EmDash CMS](https://github.com/emdash-cms/emdash).
+Semantic search + grounded AI chat for [EmDash CMS](https://github.com/emdash-cms/emdash).
 Every published post/page is automatically indexed; public `search` and `chat`
 routes answer natural-language queries over your own content.
 
@@ -25,7 +25,7 @@ need control the managed service doesn't expose. Both are selected by the
 `kbBackend` setting; the plugin is built so switching is a settings change, not a
 reinstall.
 
-> AI Search is a Cloudflare **open-beta** service (formerly AutoRAG). It's
+> AI Search is a Cloudflare **open-beta** service. It's
 > generous on the free tier but pricing/limits and API can still shift — pin to
 > documented endpoints and watch Cloudflare's release notes. Workers AI /
 > inference compute is billed separately from AI Search itself.
@@ -38,7 +38,7 @@ reinstall.
 | Config effort | CF account id **+ API token** in Settings | **No token** — bindings in wrangler config |
 | Registry-installable | ✅ yes | ❌ no (trusted/local only) |
 | Extra requirements | any EmDash | Astro 6 + `@astrojs/cloudflare` v13+ |
-| Entry point | `@emdash/rag/sandbox` | `@emdash/rag` (default) / `@emdash/rag/native` |
+| Entry point | `emdash-ai-search/sandbox` | `emdash-ai-search` (default) / `emdash-ai-search/native` |
 
 Both modes support both backends. Sandboxed uses the AI Search / Vectorize /
 Workers AI / R2 **REST** APIs; native uses the `ai_search_namespaces`,
@@ -74,7 +74,7 @@ index drafts”** to index on every save regardless of status (uses
 
 Installing on a blog that **already has posts**? New posts index automatically on
 publish, but the existing archive needs a one-time backfill. Open **Admin →
-Plugins → RAG Search → Backfill** and click **Start backfill**. That's it — it
+Plugins → AI Search → Backfill** and click **Start backfill**. That's it — it
 runs in the background and you can watch progress (indexed / skipped / remaining).
 
 ### How it works (architecture)
@@ -126,14 +126,14 @@ Two public routes sit on top of the vector index:
 **Search** — ranked matching chunks, no LLM:
 
 ```
-POST /_emdash/api/plugins/rag-search/search
+POST /_emdash/api/plugins/ai-search/search
 { "query": "how do refunds work", "limit": 10, "filters": { "collections": ["docs"] } }
 ```
 
 **Chat (the chatbot)** — retrieve-then-generate a grounded answer with citations:
 
 ```
-POST /_emdash/api/plugins/rag-search/chat
+POST /_emdash/api/plugins/ai-search/chat
 { "question": "how do refunds work?", "filters": { "collections": ["docs"] } }
 ```
 
@@ -150,7 +150,7 @@ POST /_emdash/api/plugins/rag-search/chat
 ### How the chatbot works
 
 Search returns matching chunks; **chat** adds the generation step — the "G" in
-RAG that SonicJS's ai-search never had. Entirely inside the plugin:
+retrieve-then-generate that SonicJS's ai-search never had. Entirely inside the plugin:
 
 ```
 question → embed → Vectorize query (top chatTopK chunks, FULL chunk text)
@@ -183,7 +183,7 @@ question → embed → Vectorize query (top chatTopK chunks, FULL chunk text)
   Search `chat/completions` and Workers AI both support `stream: true`).
 
   ```
-  POST /_emdash/api/plugins/rag-search/chat/stream   (native build only)
+  POST /_emdash/api/plugins/ai-search/chat/stream   (native build only)
   { "question": "…" }
   → SSE: data: {"delta":"Refunds "}  data: {"delta":"are "} … data: [DONE]
   ```
@@ -213,7 +213,7 @@ nothing.
 
 ```astro
 ---
-import { ChatWidget } from "@emdash/rag/astro";
+import { ChatWidget } from "emdash-ai-search/astro";
 ---
 
 <!-- floating button, scoped to the "docs" collection -->
@@ -225,7 +225,7 @@ import { ChatWidget } from "@emdash/rag/astro";
 
 The widget is dependency-free (vanilla JS + scoped CSS), supports multiple
 instances per page, renders answers with a **Sources:** line from the citations,
-and posts to `/_emdash/api/plugins/rag-search/chat` (override with
+and posts to `/_emdash/api/plugins/ai-search/chat` (override with
 `node={{ endpoint: "…" }}` if your plugin id differs).
 
 ---
@@ -235,7 +235,7 @@ and posts to `/_emdash/api/plugins/rag-search/chat` (override with
 The managed path. Minimal steps:
 
 1. **Create an R2 bucket** for the plugin to write pages into, e.g.
-   `emdash-rag-content`.
+   `emdash-ai-search-content`.
 2. **Create an AI Search instance** in the Cloudflare dashboard (Compute & AI →
    AI Search), pointed at that R2 bucket. Note the instance name.
 3. **Settings → Retrieval backend = "Cloudflare AI Search"**, then set the
@@ -254,7 +254,7 @@ Native `wrangler.jsonc` bindings for this backend:
 ```jsonc
 {
   "ai_search_namespaces": [{ "binding": "AI_SEARCH", "namespace": "default" }],
-  "r2_buckets": [{ "binding": "R2", "bucket_name": "emdash-rag-content" }]
+  "r2_buckets": [{ "binding": "R2", "bucket_name": "emdash-ai-search-content" }]
 }
 ```
 
@@ -268,7 +268,7 @@ Dimensions must match the embedding model. Default model
 `@cf/baai/bge-base-en-v1.5` = **768 dims**, cosine distance:
 
 ```sh
-npx wrangler vectorize create emdash-rag --dimensions=768 --metric=cosine
+npx wrangler vectorize create emdash-ai-search --dimensions=768 --metric=cosine
 ```
 
 If you change the embedding model, recreate the index with that model's
@@ -277,7 +277,7 @@ dimension count.
 ### 2. Settings — from the admin panel
 
 Everything is configured in the admin panel. Open **EmDash Admin → Plugins →
-RAG Search**. The plugin ships a full **Block Kit admin page** (declarative — no
+AI Search**. The plugin ships a full **Block Kit admin page** (declarative — no
 browser JS from the plugin) with three parts:
 
 1. **Stats** — collections indexed + total chunks.
@@ -287,7 +287,7 @@ browser JS from the plugin) with three parts:
    |---|---|---|
    | Cloudflare Account ID | **required** | leave blank (unused) |
    | Cloudflare API Token | **required** (Workers AI + Vectorize) | leave blank (unused) |
-   | Vectorize Index Name | `emdash-rag` | `emdash-rag` (informational; binding is authoritative) |
+   | Vectorize Index Name | `emdash-ai-search` | `emdash-ai-search` (informational; binding is authoritative) |
    | Embedding Model | `@cf/baai/bge-base-en-v1.5` | same |
    | Vector TopK | `50` | `50` (capped to 50 by the binding when returning metadata) |
    | Results Per Query | `20` | `20` |
@@ -334,12 +334,12 @@ pnpm run build          # emdash-plugin build → dist/ (descriptor + manifest +
 
 ```js
 import emdash from "emdash/astro";
-import ragSearch from "@emdash/rag/sandbox";
+import aiSearch from "emdash-ai-search/sandbox";
 
 export default defineConfig({
   integrations: [
     emdash({
-      sandboxed: [ragSearch],
+      sandboxed: [aiSearch],
       sandboxRunner: "@emdash-cms/sandbox-workerd/sandbox",
     }),
   ],
@@ -360,7 +360,7 @@ Paste it into **Settings → Cloudflare API Token**, and your account id into
 Publish a post → it's indexed via REST. Query:
 
 ```
-POST /_emdash/api/plugins/rag-search/search
+POST /_emdash/api/plugins/ai-search/search
 { "query": "how do refunds work", "limit": 10, "filters": { "collections": ["docs"] } }
 ```
 
@@ -388,7 +388,7 @@ directly. Auth is the binding — **no API token anywhere**. This is exactly how
 {
   "ai": { "binding": "AI" },
   "vectorize": [
-    { "binding": "VECTORIZE", "index_name": "emdash-rag" }
+    { "binding": "VECTORIZE", "index_name": "emdash-ai-search" }
   ]
 }
 ```
@@ -410,12 +410,12 @@ pnpm run build:native   # tsc → dist/native.js (+ the shared modules)
 
 ```js
 import emdash from "emdash/astro";
-import ragSearch from "@emdash/rag";   // default export = native entry
+import aiSearch from "emdash-ai-search";   // default export = native entry
 
 export default defineConfig({
   integrations: [
     emdash({
-      plugins: [ragSearch()],          // native plugins are called as factories
+      plugins: [aiSearch()],          // native plugins are called as factories
     }),
   ],
 });
@@ -462,7 +462,7 @@ _Content rephrased for compliance with licensing restrictions._
 content:afterPublish / afterSave / manual index
         │
         ▼
-   RagService  ── depends only on ports ──▶  Embedder        VectorBackend
+   SearchService  ── depends only on ports ──▶  Embedder        VectorBackend
    IndexManager                               ├ RestEmbedder  ├ RestVectorBackend   (Mode A, ctx.http)
         │                                      └ BindingEmbedder└ BindingVectorBackend (Mode B, env.*)
         ├─ ChunkingService   (pure)
@@ -478,9 +478,9 @@ Files:
 - `src/native.ts` — **native** entry (`definePlugin` + `cloudflare:workers` env)
 - `src/services/ports.ts` — `Embedder` / `VectorBackend` / `Generator` interfaces
 - `src/services/{embedding,vector-store,generator}.{rest,binding}.ts` — the six transports
-- `src/services/custom-rag.service.ts` (index + retrieve), `chat.service.ts` (RAG chat),
+- `src/services/search.service.ts` (index + retrieve), `chat.service.ts` (grounded AI chat),
   `indexer.ts`, `chunking.service.ts` — engine
-- `src/index.ts` — native descriptor factory `rag()` (sets `componentsEntry`)
+- `src/index.ts` — native descriptor factory `aiSearch()` (sets `componentsEntry`)
 - `src/astro/ChatWidget.astro` — the injectable front-end widget
 - `src/astro/index.ts` — `blockComponents` map (auto-wired into `<PortableText>`)
 
@@ -494,13 +494,13 @@ Declared in `emdash-plugin.jsonc`, provisioned by the host:
 ## Honest positioning
 
 Semantic **search** plus a retrieve-then-generate **chat** endpoint — single-turn,
-grounded RAG over your content. Word-count chunking, 768-dim embeddings,
-**vector-only** retrieval (no keyword/BM25 or GraphRAG). Retained SonicJS
+grounded AI search over your content. Word-count chunking, 768-dim embeddings,
+**vector-only** retrieval (no keyword/BM25 or graph retrieval). Retained SonicJS
 limitation, documented with a `ponytail:` note in the code: filtering happens
 app-side after a `vectorTopK` query (Vectorize metadata filters were unreliable)
 — raise `vectorTopK` or move to server-side filters. The chat is single-turn (no
 conversation memory) and non-streaming. If you need hybrid vector+keyword,
-GraphRAG, multi-turn memory, or larger context windows, either extend this plugin
+graph retrieval, multi-turn memory, or larger context windows, either extend this plugin
 or point a thin proxy plugin at a purpose-built backend (e.g. Compass). Streaming
 now exists but is native-only (sandboxed routes can't return a raw stream).
 
@@ -567,21 +567,21 @@ MIT. Ported from `lane711/sonicjs` (`ai-search-plugin`), MIT. Built against the
   `backfill-types.ts` (pure model + decisions, unit-checked) and
   `backfill.service.ts` (the engine). Admin shows Start/Cancel + live progress.
 - **v0.6 (streaming)** — added **SSE streaming chat** (`Generator.generateStream`
-  + `AiSearchClient.chatStream` + `RagBackend.chatStream`), a **native-only**
+  + `AiSearchClient.chatStream` + `SearchBackend.chatStream`), a **native-only**
   `chat/stream` route returning an SSE `Response`, and a shared SSE parser
   (`sse.ts`). The widget consumes the stream token-by-token and falls back to the
   single-response `chat` route. Sandboxed stays single-response (route bridge
   can't stream). No React "assistant UI" library — incompatible with the
   sandboxed widget, and unnecessary for streaming.
-- **v0.5 (AI Search backend)** — added a pluggable **RagBackend** seam and made
+- **v0.5 (AI Search backend)** — added a pluggable **SearchBackend** seam and made
   **Cloudflare AI Search (managed) the default backend** over the self-managed
   Vectorize pipeline. Backend chosen by the `kbBackend` setting; both work in
   sandboxed (REST) and native (bindings) modes. AI Search indexes pages written
   to an R2 bucket; Vectorize keeps the original chunk→embed pipeline. New files:
-  `rag-backend.ts` (interface), `ai-search-backend.ts` + `vectorize-backend.ts`
+  `search-backend.ts` (interface), `ai-search-backend.ts` + `vectorize-backend.ts`
   (impls), `ai-search-client.ts`, `r2-writer.ts`, `backends.ts` (factories,
   replacing `transports.ts`).
 - **v0.4 (widget)** — added a front-end-injectable **chat widget** (native only):
   an "AI Chat" Portable Text block + a dependency-free `ChatWidget.astro` render
-  component (auto-wired via `componentsEntry`), plus a `@emdash/rag/astro` export
+  component (auto-wired via `componentsEntry`), plus a `emdash-ai-search/astro` export
   for direct template use.

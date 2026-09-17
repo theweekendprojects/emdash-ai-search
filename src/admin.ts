@@ -51,7 +51,7 @@ async function render(ctx: Ctx, factory: BackendFactory, toast?: Blocks["toast"]
   }
 
   const blocks: unknown[] = [
-    { type: "header", text: "RAG Search" },
+    { type: "header", text: "AI Search" },
     {
       type: "context",
       text: `Backend: ${isVectorize ? "Vectorize (self-managed, advanced)" : "Cloudflare AI Search (managed, recommended)"}`,
@@ -62,7 +62,7 @@ async function render(ctx: Ctx, factory: BackendFactory, toast?: Blocks["toast"]
     blocks.push({
       type: "banner",
       variant: "error",
-      title: "RAG engine not ready",
+      title: "AI search engine not ready",
       description: `${backendError} — check the settings for the selected backend below.`,
     });
   }
@@ -321,7 +321,7 @@ export async function handleAdmin(ctx: Ctx, factory: BackendFactory, rawInput: u
     // page_load (and any fallthrough)
     return render(ctx, factory);
   } catch (err) {
-    ctx.log.error("[RAG] admin action failed", { err: String(err) });
+    ctx.log.error("[ai-search] admin action failed", { err: String(err) });
     return render(ctx, factory, {
       message: err instanceof Error ? err.message : "Action failed",
       type: "error",

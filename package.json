@@ -1,10 +1,10 @@
 {
-  "name": "@emdash/rag",
+  "name": "emdash-ai-search",
   "version": "0.4.0",
-  "description": "Semantic search + RAG chat for EmDash CMS. Native-first (trusted): reaches Workers AI / AI Search / Vectorize / R2 through Cloudflare bindings, tokenless — installed via plugins:[rag()]. An optional sandboxed build (Cloudflare REST APIs over ctx.http, API-token config) is available at the ./sandbox entry. Ported from the SonicJS ai-search plugin (MIT).",
+  "description": "Semantic search + grounded AI chat for EmDash CMS. Native-first (trusted): reaches Workers AI / AI Search / Vectorize / R2 through Cloudflare bindings, tokenless — installed via plugins:[aiSearch()]. An optional sandboxed build (Cloudflare REST APIs over ctx.http, API-token config) is available at the ./sandbox entry. Ported from the SonicJS ai-search plugin (MIT).",
   "type": "module",
   "plugin": {
-    "id": "rag"
+    "id": "ai-search"
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -53,9 +53,10 @@
   "keywords": [
     "emdash",
     "emdash-plugin",
-    "rag",
+    "ai-search",
     "search",
     "semantic-search",
+    "ai-chat",
     "vectorize",
     "workers-ai",
     "cms",

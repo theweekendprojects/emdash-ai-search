@@ -5,15 +5,15 @@
  *   NativeBackendFactory     → Cloudflare bindings (env.AI, env.VECTORIZE,
  *                              env.AI_SEARCH namespace, env.<R2 bucket>). Tokenless.
  *
- * Each builds the RagBackend chosen by settings.kbBackend:
+ * Each builds the SearchBackend chosen by settings.kbBackend:
  *   "ai-search" → AiSearchBackend (managed; default)
  *   "vectorize" → VectorizeBackend (self-managed pipeline)
  */
 
 import type { Ctx } from "./services/host";
 import type { R2Bucket } from "./services/host";
-import type { RagSettings } from "./services/types";
-import type { RagBackend } from "./services/rag-backend";
+import type { SearchSettings } from "./services/types";
+import type { SearchBackend } from "./services/search-backend";
 import type { BackendFactory } from "./core";
 
 import { AiSearchBackend } from "./services/ai-search-backend";
@@ -34,10 +34,10 @@ import { BindingR2Writer } from "./services/r2-writer";
 // ── Sandboxed (REST over ctx.http) ──────────────────────────────────────────
 
 export class SandboxedBackendFactory implements BackendFactory {
-  build(ctx: Ctx, settings: RagSettings): RagBackend {
-    if (!ctx.http) throw new Error("RAG(sandboxed): network:request capability missing (ctx.http)");
+  build(ctx: Ctx, settings: SearchSettings): SearchBackend {
+    if (!ctx.http) throw new Error("AI search (sandboxed): network:request capability missing (ctx.http)");
     if (!settings.cfAccountId || !settings.cfApiToken) {
-      throw new Error("RAG(sandboxed): Cloudflare account id / API token not set in Settings");
+      throw new Error("AI search (sandboxed): Cloudflare account id / API token not set in Settings");
     }
 
     if (settings.kbBackend === "vectorize") {
@@ -67,12 +67,12 @@ export interface NativeBindings {
 export class NativeBackendFactory implements BackendFactory {
   constructor(private bindings: NativeBindings) {}
 
-  build(ctx: Ctx, settings: RagSettings): RagBackend {
+  build(ctx: Ctx, settings: SearchSettings): SearchBackend {
     const b = this.bindings;
 
     if (settings.kbBackend === "vectorize") {
-      if (!b.AI) throw new Error("RAG(native): AI binding missing (add [ai] to wrangler config)");
-      if (!b.VECTORIZE) throw new Error("RAG(native): VECTORIZE binding missing (add [[vectorize]])");
+      if (!b.AI) throw new Error("AI search (native): AI binding missing (add [ai] to wrangler config)");
+      if (!b.VECTORIZE) throw new Error("AI search (native): VECTORIZE binding missing (add [[vectorize]])");
       const embedder = new BindingEmbedder(b.AI, settings.embeddingModel);
       const vectors = new BindingVectorBackend(b.VECTORIZE);
       const generator = new BindingGenerator(b.AI, settings.chatModel);
@@ -80,8 +80,8 @@ export class NativeBackendFactory implements BackendFactory {
     }
 
     // default: managed AI Search
-    if (!b.AI_SEARCH) throw new Error("RAG(native): AI_SEARCH namespace binding missing (add [[ai_search_namespaces]])");
-    if (!b.R2) throw new Error("RAG(native): R2 bucket binding missing (add the [[r2_buckets]] the instance indexes)");
+    if (!b.AI_SEARCH) throw new Error("AI search (native): AI_SEARCH namespace binding missing (add [[ai_search_namespaces]])");
+    if (!b.R2) throw new Error("AI search (native): R2 bucket binding missing (add the [[r2_buckets]] the instance indexes)");
     const client = new BindingAiSearchClient(b.AI_SEARCH.get(settings.aiSearchInstance));
     const r2 = new BindingR2Writer(b.R2);
     return new AiSearchBackend(ctx, client, r2, { resultsLimit: settings.resultsLimit, chatModel: settings.chatModel });

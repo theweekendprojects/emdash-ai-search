@@ -7,16 +7,16 @@
 # so local testing matches what npm consumers get. No source is copied into the
 # consuming site; only the built tarball is installed.
 #
-# @emdash/rag is NATIVE-FIRST (smtp model): the default `build` is `tsc`, which
-# emits the native descriptor (dist/index.js -> rag()) + runtime (dist/native.js)
-# + admin/astro. That's what the site registers via plugins:[rag()]. An optional
+# emdash-ai-search is NATIVE-FIRST (smtp model): the default `build` is `tsc`, which
+# emits the native descriptor (dist/index.js -> aiSearch()) + runtime (dist/native.js)
+# + admin/astro. That's what the site registers via plugins:[aiSearch()]. An optional
 # sandboxed bundle (dist/plugin.mjs via `emdash-plugin build`) can be produced
-# with RAG_WITH_SANDBOX=1, but it is NOT needed for the native/internal path.
+# with AI_SEARCH_WITH_SANDBOX=1, but it is NOT needed for the native/internal path.
 #
 # Usage:
 #   bash scripts/local-install.sh                       # build+pack, install into the default landing page
 #   bash scripts/local-install.sh /path/to/consuming-site
-#   RAG_WITH_SANDBOX=1 bash scripts/local-install.sh     # also build the optional ./sandbox bundle
+#   AI_SEARCH_WITH_SANDBOX=1 bash scripts/local-install.sh     # also build the optional ./sandbox bundle
 #
 # After running, build/deploy the consuming site to verify:
 #   cd <site> && pnpm build      (or pnpm deploy)
@@ -24,7 +24,7 @@
 # Node: the native `tsc` build runs fine on the site's Node (>=22). The site's
 # pinned pnpm (>=11) requires Node >= 22.13, so everything runs under Node 22.
 # The OPTIONAL sandbox build uses the rolldown bundler, which can hang on Node 22
-# here; it is built under Node 20 when RAG_WITH_SANDBOX=1.
+# here; it is built under Node 20 when AI_SEARCH_WITH_SANDBOX=1.
 #
 # Requirements: Node >= 22 via nvm (site + native build); pnpm; npm. Node 20 via
 # nvm only if you opt into the sandbox build.
@@ -67,12 +67,12 @@ npx tsc
 
 # 1b. Optional sandbox bundle (./sandbox). Built under Node 20 to avoid the
 #     rolldown-on-Node-22 hang. Not needed for the native/internal path.
-if [ "${RAG_WITH_SANDBOX:-0}" = "1" ]; then
+if [ "${AI_SEARCH_WITH_SANDBOX:-0}" = "1" ]; then
   if [ -d "$NODE20_BIN" ]; then
     echo "==> Building optional sandbox bundle (emdash-plugin build, Node 20)"
     env "PATH=$NODE20_BIN:$PATH" pnpm run build:sandbox
   else
-    echo "WARN: RAG_WITH_SANDBOX=1 but Node 20 not found at $NODE20_BIN; skipping sandbox build."
+    echo "WARN: AI_SEARCH_WITH_SANDBOX=1 but Node 20 not found at $NODE20_BIN; skipping sandbox build."
   fi
 fi
 

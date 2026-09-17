@@ -1,17 +1,17 @@
 /**
  * ChatService — retrieval-augmented generation (the "chatbot").
  *
- * The G that SonicJS's ai-search never had: retrieve top chunks (RagService),
+ * The G that SonicJS's ai-search never had: retrieve top chunks (SearchService),
  * build a grounded prompt, call the Generator, return the answer + citations.
  *
  * Grounding rule baked into the system prompt: answer ONLY from the provided
- * context; if the context doesn't cover it, say so. This is what keeps a RAG
- * chatbot from hallucinating over your content.
+ * context; if the context doesn't cover it, say so. This is what keeps a grounded
+ * AI chatbot from hallucinating over your content.
  */
 
-import type { RagService } from "./custom-rag.service";
+import type { SearchService } from "./search.service";
 import type { Generator, ChatMessage } from "./ports";
-import type { RagSettings, SearchFilters, ChatCitation, ChatResponse } from "./types";
+import type { SearchSettings, SearchFilters, ChatCitation, ChatResponse } from "./types";
 
 const SYSTEM_PROMPT =
   "You are a helpful assistant that answers questions using ONLY the provided context. " +
@@ -20,16 +20,16 @@ const SYSTEM_PROMPT =
 
 export class ChatService {
   constructor(
-    private rag: RagService,
+    private search: SearchService,
     private generator: Generator,
-    private settings: RagSettings,
+    private settings: SearchSettings,
   ) {}
 
   async ask(question: string, filters?: SearchFilters): Promise<ChatResponse> {
     const q = question.trim();
     if (!q) return { answer: "Please ask a question.", citations: [], usedChunks: 0 };
 
-    const chunks = await this.rag.retrieveChunks(q, this.settings.chatTopK, filters);
+    const chunks = await this.search.retrieveChunks(q, this.settings.chatTopK, filters);
 
     if (chunks.length === 0) {
       return {
@@ -84,7 +84,7 @@ export class ChatService {
       yield "Please ask a question.";
       return;
     }
-    const chunks = await this.rag.retrieveChunks(q, this.settings.chatTopK, filters);
+    const chunks = await this.search.retrieveChunks(q, this.settings.chatTopK, filters);
     if (chunks.length === 0) {
       yield "I don't have any indexed content that covers that.";
       return;

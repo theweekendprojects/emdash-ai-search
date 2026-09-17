@@ -106,4 +106,4 @@ import { newJob, decideDoc, contentHash, isLeaseFree, isActive } from "./service
   assert.equal(isActive(j), true);
 }
 
-console.log("emdash-rag self-check: all assertions passed ✅");
+console.log("emdash-ai-search self-check: all assertions passed ✅");

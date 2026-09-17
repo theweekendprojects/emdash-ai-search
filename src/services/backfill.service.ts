@@ -21,7 +21,7 @@
  */
 
 import type { Ctx, StorageCollection, ContentItem } from "./host";
-import type { RagBackend } from "./rag-backend";
+import type { SearchBackend } from "./search-backend";
 import {
   type BackfillJob,
   type DocState,
@@ -46,7 +46,7 @@ export class BackfillService {
 
   constructor(
     private ctx: Ctx,
-    private backend: RagBackend,
+    private backend: SearchBackend,
   ) {
     if (!ctx.content) throw new Error("Backfill: content:read capability missing (ctx.content)");
     this.jobs = ctx.storage.backfill_job as StorageCollection<BackfillJob>;

@@ -1,13 +1,13 @@
 {
   "$schema": "./node_modules/@emdash-cms/plugin-cli/schemas/emdash-plugin.schema.json",
 
-  "slug": "rag-search",
+  "slug": "ai-search",
   "publisher": "did:plc:REPLACE_WITH_YOUR_ATMOSPHERE_DID",
 
   "license": "MIT",
   "author": { "name": "Ported from SonicJS ai-search (lane711/sonicjs, MIT)" },
   "security": { "email": "security@example.com" },
-  "description": "Semantic search + RAG chat over your content. TWO backends, chosen in Settings: 'Cloudflare AI Search' (managed — auto chunk/embed/index/search, minimal setup, the DEFAULT) and 'Vectorize' (self-managed pipeline — advanced control). THIS manifest configures the SANDBOXED build (Cloudflare REST APIs over ctx.http); the native build (src/native.ts) uses bindings and is configured in astro.config.mjs. NOTE: the injectable front-end chat widget (Portable Text 'AI Chat' block) is NATIVE-ONLY per EmDash docs.",
+  "description": "Semantic search + grounded AI chat over your content. TWO backends, chosen in Settings: 'Cloudflare AI Search' (managed — auto chunk/embed/index/search, minimal setup, the DEFAULT) and 'Vectorize' (self-managed pipeline — advanced control). THIS manifest configures the SANDBOXED build (Cloudflare REST APIs over ctx.http); the native build (src/native.ts) uses bindings and is configured in astro.config.mjs. NOTE: the injectable front-end chat widget (Portable Text 'AI Chat' block) is NATIVE-ONLY per EmDash docs.",
 
   // Real capabilities (per EmDash SKILL.md), for the SANDBOXED build:
   //   - content:read     → ctx.content.list()/get() to pull items to index
@@ -33,17 +33,13 @@
     "doc_state": { "indexes": ["collectionId", "indexedAt"] }
   },
 
-  // The admin page ("/") is driven by the `admin` route (Block Kit): it renders
-  // the settings form + index-status table + backfill actions. settingsSchema is
-  // ALSO kept below so the host can render a basic fallback settings form; both
-  // read/write the same settings:* KV keys.
-  // The admin page ("/rag-search") is driven by the `admin` route (Block Kit): it
+  // The admin page ("/ai-search") is driven by the `admin` route (Block Kit): it
   // renders the settings form + index-status table + backfill actions. The
   // manifest schema (plugin-cli >=0.11) no longer accepts `settingsSchema`; all
   // settings are edited via the Block Kit form in the `admin` route, which
   // read/writes the same settings:* KV keys.
   "admin": {
-    "pages": [{ "path": "/rag-search", "label": "RAG Search", "icon": "magnifying-glass" }],
-    "widgets": [{ "id": "rag-status", "title": "RAG Index", "size": "half" }]
+    "pages": [{ "path": "/ai-search", "label": "AI Search", "icon": "magnifying-glass" }],
+    "widgets": [{ "id": "ai-search-status", "title": "AI Search Index", "size": "half" }]
   }
 }

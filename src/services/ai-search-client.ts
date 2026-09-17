@@ -1,6 +1,6 @@
 /**
  * AI Search client — talks to a Cloudflare AI Search instance (the managed
- * service; formerly AutoRAG). AI Search does chunking, embedding, indexing,
+ * service). AI Search does chunking, embedding, indexing,
  * hybrid search, reranking, and generation — we only query it.
  *
  * Two implementations of the same AiSearchClient interface:

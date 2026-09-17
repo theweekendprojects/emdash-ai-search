@@ -1,5 +1,5 @@
 /**
- * RagService — the shared RAG pipeline, transport-agnostic.
+ * SearchService — the shared retrieve-then-generate pipeline, transport-agnostic.
  *
  * Depends only on the Embedder / VectorBackend PORTS (services/ports.ts), plus
  * the EmDash ctx for content + storage. The exact same pipeline runs in both
@@ -21,7 +21,7 @@ import { ChunkingService, type ContentChunk } from "./chunking.service";
 import type { Ctx, ContentItem, StorageCollection } from "./host";
 import type { Embedder, VectorBackend, VectorRecord } from "./ports";
 import type {
-  RagSettings,
+  SearchSettings,
   SearchQuery,
   SearchResponse,
   SearchResult,
@@ -39,17 +39,17 @@ import type {
  */
 const MAX_CHUNK_TEXT_CHARS = 6000;
 
-export class RagService {
+export class SearchService {
   private chunking = new ChunkingService();
   private chunkMap: StorageCollection<ChunkMapRecord>;
 
   constructor(
     private ctx: Ctx,
-    private settings: RagSettings,
+    private settings: SearchSettings,
     private embedder: Embedder,
     private vectors: VectorBackend,
   ) {
-    if (!ctx.content) throw new Error("RAG: content:read capability missing (ctx.content unavailable)");
+    if (!ctx.content) throw new Error("AI search: content:read capability missing (ctx.content unavailable)");
     this.chunkMap = ctx.storage.chunk_map as StorageCollection<ChunkMapRecord>;
   }
 
@@ -82,7 +82,7 @@ export class RagService {
         const n = await this.upsertDocument(collectionId, item.id, chunks, item.status ?? "published");
         indexed += n;
       } catch (err) {
-        this.ctx.log.error("[RAG] index document failed", { doc: item.id, err: String(err) });
+        this.ctx.log.error("[ai-search] index document failed", { doc: item.id, err: String(err) });
         errors += chunks.length;
       }
     }

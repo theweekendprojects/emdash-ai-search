@@ -1,5 +1,5 @@
 /**
- * RagBackend — the top-level seam that decouples the hook/route layer from HOW
+ * SearchBackend — the top-level seam that decouples the hook/route layer from HOW
  * retrieval works. Selected by the `kbBackend` setting.
  *
  * Two implementations:
@@ -17,7 +17,7 @@
 
 import type { SearchResponse, ChatResponse, SearchFilters, IndexStatusRecord } from "./types";
 
-export interface RagBackend {
+export interface SearchBackend {
   /** Human label for the admin/status view. */
   readonly kind: "ai-search" | "vectorize";
 

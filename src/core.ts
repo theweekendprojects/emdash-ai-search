@@ -2,9 +2,9 @@
  * Shared plugin core — hook + route logic that is IDENTICAL in both modes and
  * across both backends.
  *
- * The seam: everything here talks to a `RagBackend` (search/chat/index/remove).
+ * The seam: everything here talks to a `SearchBackend` (search/chat/index/remove).
  * A `BackendFactory` (supplied per entry point — sandboxed vs native) builds the
- * right RagBackend based on the `kbBackend` setting:
+ * right SearchBackend based on the `kbBackend` setting:
  *   - "ai-search" (default) → AiSearchBackend (managed)
  *   - "vectorize"           → VectorizeBackend (self-managed pipeline)
  *
@@ -13,19 +13,19 @@
  */
 
 import type { Ctx } from "./services/host";
-import type { RagBackend } from "./services/rag-backend";
-import { DEFAULT_SETTINGS, type RagSettings } from "./services/types";
+import type { SearchBackend } from "./services/search-backend";
+import { DEFAULT_SETTINGS, type SearchSettings } from "./services/types";
 import { BackfillService } from "./services/backfill.service";
 
 /** Cron schedule name for the backfill drainer. */
-export const BACKFILL_CRON = "rag-backfill";
+export const BACKFILL_CRON = "ai-search-backfill";
 
-/** Builds the selected RagBackend for a given ctx + settings. Per entry point. */
+/** Builds the selected SearchBackend for a given ctx + settings. Per entry point. */
 export interface BackendFactory {
-  build(ctx: Ctx, settings: RagSettings): RagBackend;
+  build(ctx: Ctx, settings: SearchSettings): SearchBackend;
 }
 
-export async function loadSettings(ctx: Ctx): Promise<RagSettings> {
+export async function loadSettings(ctx: Ctx): Promise<SearchSettings> {
   const get = async <T>(k: string, d: T): Promise<T> => ((await ctx.kv.get<T>(`settings:${k}`)) ?? d);
   let selectedCollections: string[] = [];
   try {
@@ -35,7 +35,7 @@ export async function loadSettings(ctx: Ctx): Promise<RagSettings> {
   } catch {
     selectedCollections = [];
   }
-  const backend = (await get<string>("kbBackend", DEFAULT_SETTINGS.kbBackend)) as RagSettings["kbBackend"];
+  const backend = (await get<string>("kbBackend", DEFAULT_SETTINGS.kbBackend)) as SearchSettings["kbBackend"];
   return {
     kbBackend: backend === "vectorize" ? "vectorize" : "ai-search",
     cfAccountId: await get("cfAccountId", DEFAULT_SETTINGS.cfAccountId),
@@ -57,7 +57,7 @@ export async function indexDraftsEnabled(ctx: Ctx): Promise<boolean> {
   return (await ctx.kv.get<boolean>("settings:indexDrafts")) === true;
 }
 
-async function backendFor(ctx: Ctx, factory: BackendFactory): Promise<RagBackend> {
+async function backendFor(ctx: Ctx, factory: BackendFactory): Promise<SearchBackend> {
   return factory.build(ctx, await loadSettings(ctx));
 }
 
@@ -193,7 +193,7 @@ export async function routeSync(ctx: Ctx, factory: BackendFactory) {
     try {
       await backend.indexCollection(id);
     } catch (err) {
-      ctx.log.error("[RAG] sync failed", { collection: id, err: String(err) });
+      ctx.log.error("[ai-search] sync failed", { collection: id, err: String(err) });
     }
   }
   return { ok: true, collections: settings.selectedCollections };

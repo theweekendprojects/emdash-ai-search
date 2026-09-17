@@ -1,5 +1,5 @@
 /**
- * @emdash/rag — SANDBOXED entry (src/plugin.ts).
+ * emdash-ai-search — SANDBOXED entry (src/plugin.ts).
  *
  * Registry-installable sandboxed plugin. Embeddings + vectors go over the
  * Cloudflare REST APIs via ctx.http (RestTransportFactory), so it needs a CF
@@ -43,7 +43,7 @@ const plugin: SandboxedPlugin = {
         try {
           await onAfterPublish(asCtx(ctx), factory, event.collection, String(event.content.id));
         } catch (err) {
-          ctx.log.warn("[RAG] afterPublish failed", { err: String(err) });
+          ctx.log.warn("[ai-search] afterPublish failed", { err: String(err) });
         }
       },
     },
@@ -53,7 +53,7 @@ const plugin: SandboxedPlugin = {
         try {
           await onAfterSave(asCtx(ctx), factory, event.collection, String(event.content.id));
         } catch (err) {
-          ctx.log.warn("[RAG] afterSave failed", { err: String(err) });
+          ctx.log.warn("[ai-search] afterSave failed", { err: String(err) });
         }
       },
     },
@@ -62,7 +62,7 @@ const plugin: SandboxedPlugin = {
         try {
           await onRemove(asCtx(ctx), factory, event.collection, String(event.content.id));
         } catch (err) {
-          ctx.log.warn("[RAG] afterUnpublish failed", { err: String(err) });
+          ctx.log.warn("[ai-search] afterUnpublish failed", { err: String(err) });
         }
       },
     },
@@ -71,7 +71,7 @@ const plugin: SandboxedPlugin = {
         try {
           await onRemove(asCtx(ctx), factory, event.collection, String(event.id));
         } catch (err) {
-          ctx.log.warn("[RAG] afterDelete failed", { err: String(err) });
+          ctx.log.warn("[ai-search] afterDelete failed", { err: String(err) });
         }
       },
     },

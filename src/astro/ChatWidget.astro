@@ -1,6 +1,6 @@
 ---
 /**
- * RAG chat widget — self-contained, dependency-free.
+ * AI search chat widget — self-contained, dependency-free.
  *
  * Renders a floating chat button + panel that POSTs to the plugin's public
  * `chat` route and shows grounded answers with citations. No fetch code for the
@@ -22,7 +22,7 @@ const placeholder: string = node.placeholder ?? "Type your question…";
 const welcome: string = node.welcome ?? "Hi! Ask me anything about this site.";
 const accent: string = node.accent ?? "#465fff";
 const mode: "floating" | "inline" = node.mode === "inline" ? "inline" : "floating";
-const endpoint: string = node.endpoint ?? "/_emdash/api/plugins/rag-search/chat";
+const endpoint: string = node.endpoint ?? "/_emdash/api/plugins/ai-search/chat";
 
 // collections may arrive as a JSON string (from a text_input field) or array.
 let collections: string[] = [];
@@ -42,78 +42,78 @@ else if (typeof node.collections === "string" && node.collections.trim()) {
 const streamEndpoint: string = node.streamEndpoint ?? endpoint.replace(/\/chat$/, "/chat/stream");
 
 // A unique id lets multiple widgets coexist on one page.
-const uid = "ragchat-" + Math.random().toString(36).slice(2, 10);
+const uid = "aisearch-chat-" + Math.random().toString(36).slice(2, 10);
 const config = JSON.stringify({ endpoint, streamEndpoint, collections });
 ---
 
 <div
-  class:list={["ragchat", mode === "inline" ? "ragchat--inline" : "ragchat--floating"]}
+  class:list={["aisearch-chat", mode === "inline" ? "aisearch-chat--inline" : "aisearch-chat--floating"]}
   id={uid}
   data-config={config}
-  style={`--ragchat-accent:${accent}`}
+  style={`--aisearch-chat-accent:${accent}`}
 >
   {mode === "floating" && (
-    <button type="button" class="ragchat__launch" aria-label="Open chat" data-role="launch">
+    <button type="button" class="aisearch-chat__launch" aria-label="Open chat" data-role="launch">
       💬
     </button>
   )}
 
-  <div class="ragchat__panel" data-role="panel" hidden={mode === "floating"}>
-    <div class="ragchat__header">
+  <div class="aisearch-chat__panel" data-role="panel" hidden={mode === "floating"}>
+    <div class="aisearch-chat__header">
       <span>{title}</span>
       {mode === "floating" && (
-        <button type="button" class="ragchat__close" aria-label="Close chat" data-role="close">✕</button>
+        <button type="button" class="aisearch-chat__close" aria-label="Close chat" data-role="close">✕</button>
       )}
     </div>
 
-    <div class="ragchat__log" data-role="log" aria-live="polite">
-      <div class="ragchat__msg ragchat__msg--bot">{welcome}</div>
+    <div class="aisearch-chat__log" data-role="log" aria-live="polite">
+      <div class="aisearch-chat__msg aisearch-chat__msg--bot">{welcome}</div>
     </div>
 
-    <form class="ragchat__form" data-role="form">
+    <form class="aisearch-chat__form" data-role="form">
       <input
         type="text"
-        class="ragchat__input"
+        class="aisearch-chat__input"
         data-role="input"
         placeholder={placeholder}
         autocomplete="off"
         aria-label="Your question"
       />
-      <button type="submit" class="ragchat__send" data-role="send">Send</button>
+      <button type="submit" class="aisearch-chat__send" data-role="send">Send</button>
     </form>
   </div>
 </div>
 
 <style>
-  .ragchat { --ragchat-accent: #465fff; font-family: system-ui, sans-serif; }
-  .ragchat--floating { position: fixed; right: 20px; bottom: 20px; z-index: 9999; }
-  .ragchat__launch {
+  .aisearch-chat { --aisearch-chat-accent: #465fff; font-family: system-ui, sans-serif; }
+  .aisearch-chat--floating { position: fixed; right: 20px; bottom: 20px; z-index: 9999; }
+  .aisearch-chat__launch {
     width: 56px; height: 56px; border-radius: 50%; border: none; cursor: pointer;
-    background: var(--ragchat-accent); color: #fff; font-size: 24px; box-shadow: 0 4px 16px rgba(0,0,0,.2);
+    background: var(--aisearch-chat-accent); color: #fff; font-size: 24px; box-shadow: 0 4px 16px rgba(0,0,0,.2);
   }
-  .ragchat__panel {
+  .aisearch-chat__panel {
     display: flex; flex-direction: column; width: 360px; max-width: calc(100vw - 40px);
     height: 480px; max-height: calc(100vh - 120px);
     background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; overflow: hidden;
     box-shadow: 0 8px 32px rgba(0,0,0,.18);
   }
-  .ragchat--floating .ragchat__panel { position: fixed; right: 20px; bottom: 88px; }
-  .ragchat--inline .ragchat__panel { position: relative; width: 100%; height: 520px; }
-  .ragchat__header {
+  .aisearch-chat--floating .aisearch-chat__panel { position: fixed; right: 20px; bottom: 88px; }
+  .aisearch-chat--inline .aisearch-chat__panel { position: relative; width: 100%; height: 520px; }
+  .aisearch-chat__header {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 12px 14px; background: var(--ragchat-accent); color: #fff; font-weight: 600; font-size: 14px;
+    padding: 12px 14px; background: var(--aisearch-chat-accent); color: #fff; font-weight: 600; font-size: 14px;
   }
-  .ragchat__close { background: transparent; border: none; color: #fff; cursor: pointer; font-size: 16px; }
-  .ragchat__log { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; background: #fbfaf6; }
-  .ragchat__msg { padding: 9px 12px; border-radius: 12px; font-size: 14px; line-height: 1.45; max-width: 85%; white-space: pre-wrap; }
-  .ragchat__msg--bot { background: #fff; border: 1px solid #e5e7eb; align-self: flex-start; }
-  .ragchat__msg--user { background: var(--ragchat-accent); color: #fff; align-self: flex-end; }
-  .ragchat__cite { font-size: 11px; color: #6b7280; align-self: flex-start; margin-top: -4px; }
-  .ragchat__cite a { color: #6b7280; }
-  .ragchat__form { display: flex; gap: 8px; padding: 10px; border-top: 1px solid #e5e7eb; background: #fff; }
-  .ragchat__input { flex: 1; padding: 9px 12px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px; }
-  .ragchat__send { padding: 9px 14px; border: none; border-radius: 8px; background: var(--ragchat-accent); color: #fff; cursor: pointer; font-size: 14px; }
-  .ragchat__send:disabled { opacity: .6; cursor: default; }
+  .aisearch-chat__close { background: transparent; border: none; color: #fff; cursor: pointer; font-size: 16px; }
+  .aisearch-chat__log { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; background: #fbfaf6; }
+  .aisearch-chat__msg { padding: 9px 12px; border-radius: 12px; font-size: 14px; line-height: 1.45; max-width: 85%; white-space: pre-wrap; }
+  .aisearch-chat__msg--bot { background: #fff; border: 1px solid #e5e7eb; align-self: flex-start; }
+  .aisearch-chat__msg--user { background: var(--aisearch-chat-accent); color: #fff; align-self: flex-end; }
+  .aisearch-chat__cite { font-size: 11px; color: #6b7280; align-self: flex-start; margin-top: -4px; }
+  .aisearch-chat__cite a { color: #6b7280; }
+  .aisearch-chat__form { display: flex; gap: 8px; padding: 10px; border-top: 1px solid #e5e7eb; background: #fff; }
+  .aisearch-chat__input { flex: 1; padding: 9px 12px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px; }
+  .aisearch-chat__send { padding: 9px 14px; border: none; border-radius: 8px; background: var(--aisearch-chat-accent); color: #fff; cursor: pointer; font-size: 14px; }
+  .aisearch-chat__send:disabled { opacity: .6; cursor: default; }
 </style>
 
 <script is:inline define:vars={{ uid }}>
@@ -128,7 +128,7 @@ const config = JSON.stringify({ endpoint, streamEndpoint, collections });
     const q = (sel) => root.querySelector(`[data-role="${sel}"]`);
     const panel = q("panel"), log = q("log"), form = q("form"), input = q("input"), send = q("send");
     const launch = q("launch"), close = q("close");
-    const isFloating = root.classList.contains("ragchat--floating");
+    const isFloating = root.classList.contains("aisearch-chat--floating");
 
     function show() { if (panel) panel.hidden = false; if (launch) launch.style.display = "none"; }
     function hide() { if (panel) panel.hidden = true; if (launch) launch.style.display = ""; }
@@ -137,7 +137,7 @@ const config = JSON.stringify({ endpoint, streamEndpoint, collections });
 
     function bubble(text, who) {
       const el = document.createElement("div");
-      el.className = "ragchat__msg ragchat__msg--" + who;
+      el.className = "aisearch-chat__msg aisearch-chat__msg--" + who;
       el.textContent = text;
       log.appendChild(el);
       log.scrollTop = log.scrollHeight;
@@ -146,7 +146,7 @@ const config = JSON.stringify({ endpoint, streamEndpoint, collections });
     function citations(list) {
       if (!list || !list.length) return;
       const el = document.createElement("div");
-      el.className = "ragchat__cite";
+      el.className = "aisearch-chat__cite";
       el.textContent = "Sources: " + list.map((c) => c.title).filter(Boolean).join(", ");
       log.appendChild(el);
       log.scrollTop = log.scrollHeight;

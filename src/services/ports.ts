@@ -6,8 +6,8 @@
  *   - REST      (sandboxed mode) — calls Cloudflare REST APIs over ctx.http
  *   - Bindings  (native mode)    — calls env.AI / env.VECTORIZE directly
  *
- * RagService / IndexManager depend ONLY on these ports, so the exact same RAG
- * pipeline runs in both modes. Only the wiring differs per entry point.
+ * SearchService / IndexManager depend ONLY on these ports, so the exact same
+ * search pipeline runs in both modes. Only the wiring differs per entry point.
  */
 
 import type { VectorMatch } from "./types";

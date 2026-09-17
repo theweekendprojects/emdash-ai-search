@@ -1,5 +1,5 @@
 /**
- * AiSearchBackend — the managed RagBackend (the DEFAULT).
+ * AiSearchBackend — the managed SearchBackend (the DEFAULT).
  *
  * Cloudflare AI Search owns chunking, embedding, indexing, hybrid search,
  * reranking, and generation. This backend's job is small:
@@ -12,13 +12,13 @@
  * managed backend. `indexCollection` just (re)writes every published page's file.
  */
 
-import type { RagBackend } from "./rag-backend";
+import type { SearchBackend } from "./search-backend";
 import type { Ctx } from "./host";
 import type { SearchFilters, SearchResponse, ChatResponse, IndexStatusRecord, ChatCitation } from "./types";
 import type { AiSearchClient, AiSearchChunk } from "./ai-search-client";
 import { type R2Writer, pageKey } from "./r2-writer";
 
-export class AiSearchBackend implements RagBackend {
+export class AiSearchBackend implements SearchBackend {
   readonly kind = "ai-search" as const;
 
   constructor(

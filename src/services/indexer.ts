@@ -1,21 +1,21 @@
 /**
  * IndexManager — status tracking via ctx.storage.index_meta, transport-agnostic.
  *
- * Takes the Embedder + VectorBackend ports (same as RagService) so it works
+ * Takes the Embedder + VectorBackend ports (same as SearchService) so it works
  * unchanged in both sandboxed and native modes.
  */
 
-import { RagService } from "./custom-rag.service";
+import { SearchService } from "./search.service";
 import type { Ctx, StorageCollection } from "./host";
 import type { Embedder, VectorBackend } from "./ports";
-import type { RagSettings, IndexStatusRecord } from "./types";
+import type { SearchSettings, IndexStatusRecord } from "./types";
 
 export class IndexManager {
   private meta: StorageCollection<IndexStatusRecord>;
 
   constructor(
     private ctx: Ctx,
-    private settings: RagSettings,
+    private settings: SearchSettings,
     private embedder: Embedder,
     private vectors: VectorBackend,
   ) {
@@ -33,8 +33,8 @@ export class IndexManager {
     });
 
     try {
-      const rag = new RagService(this.ctx, this.settings, this.embedder, this.vectors);
-      const r = await rag.indexCollection(collectionId);
+      const search = new SearchService(this.ctx, this.settings, this.embedder, this.vectors);
+      const r = await search.indexCollection(collectionId);
       const rec: IndexStatusRecord = {
         collectionId,
         collectionName,
@@ -66,7 +66,7 @@ export class IndexManager {
       try {
         await this.indexCollection(id);
       } catch (err) {
-        this.ctx.log.error("[RAG] sync failed", { collection: id, err: String(err) });
+        this.ctx.log.error("[ai-search] sync failed", { collection: id, err: String(err) });
       }
     }
   }

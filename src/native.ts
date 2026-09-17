@@ -1,5 +1,5 @@
 /**
- * @emdash/rag — NATIVE entry (src/native.ts).
+ * emdash-ai-search — NATIVE entry (src/native.ts).
  *
  * Trusted (native) plugin. Runs in the host Worker isolate, so it can read the
  * Cloudflare bindings directly — NO API token, exactly like the Cloudflare
@@ -24,6 +24,7 @@ import { definePlugin } from "emdash";
 import { env } from "cloudflare:workers";
 import type { Ctx } from "./services/host";
 import { NativeBackendFactory, type NativeBindings } from "./backends";
+// NB: hook/route bodies below still come from ./core; only names/ids changed.
 import {
   onInstall,
   onActivate,
@@ -61,22 +62,22 @@ const asCtx = (ctx: unknown) => ctx as Ctx;
 
 export function createPlugin() {
   return definePlugin({
-    id: "rag",
-    version: "0.5.0",
+    id: "ai-search",
+    version: "0.4.0",
 
     admin: {
-      entry: "@emdash/rag/admin",
-      pages: [{ path: "/", label: "RAG Search", icon: "magnifying-glass" }],
-      widgets: [{ id: "rag-status", title: "RAG Index", size: "half" }],
+      entry: "emdash-ai-search/admin",
+      pages: [{ path: "/", label: "AI Search", icon: "magnifying-glass" }],
+      widgets: [{ id: "ai-search-status", title: "AI Search Index", size: "half" }],
       // Front-end injectable chatbot: appears in the editor's "/" slash menu.
       // Rendered on the site by src/astro/ChatWidget.astro (wired via the
-      // descriptor's componentsEntry in rag()).
+      // descriptor's componentsEntry in aiSearch()).
       portableTextBlocks: [
         {
           type: "chat-widget",
           label: "AI Chat",
           icon: "link",
-          description: "Embed the RAG chatbot on this page.",
+          description: "Embed the AI chatbot on this page.",
           fields: [
             { type: "text_input", action_id: "title", label: "Panel title" },
             { type: "text_input", action_id: "placeholder", label: "Input placeholder" },
@@ -109,7 +110,7 @@ export function createPlugin() {
           try {
             await onAfterPublish(asCtx(ctx), bindingFactory(), event.collection, String(event.content.id));
           } catch (err) {
-            ctx.log.warn("[RAG] afterPublish failed", { err: String(err) });
+            ctx.log.warn("[ai-search] afterPublish failed", { err: String(err) });
           }
         },
       },
@@ -118,7 +119,7 @@ export function createPlugin() {
           try {
             await onAfterSave(asCtx(ctx), bindingFactory(), event.collection, String(event.content.id));
           } catch (err) {
-            ctx.log.warn("[RAG] afterSave failed", { err: String(err) });
+            ctx.log.warn("[ai-search] afterSave failed", { err: String(err) });
           }
         },
       },
@@ -127,7 +128,7 @@ export function createPlugin() {
           try {
             await onRemove(asCtx(ctx), bindingFactory(), event.collection, String(event.content.id));
           } catch (err) {
-            ctx.log.warn("[RAG] afterUnpublish failed", { err: String(err) });
+            ctx.log.warn("[ai-search] afterUnpublish failed", { err: String(err) });
           }
         },
       },
@@ -136,7 +137,7 @@ export function createPlugin() {
           try {
             await onRemove(asCtx(ctx), bindingFactory(), event.collection, String(event.id));
           } catch (err) {
-            ctx.log.warn("[RAG] afterDelete failed", { err: String(err) });
+            ctx.log.warn("[ai-search] afterDelete failed", { err: String(err) });
           }
         },
       },
