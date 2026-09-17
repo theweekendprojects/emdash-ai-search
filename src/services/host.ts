@@ -36,22 +36,42 @@ export interface KVAccess {
   list(prefix?: string): Promise<Array<{ key: string; value: unknown }>>;
 }
 
+/**
+ * Mirrors EmDash's real ContentItem: no top-level `collection` or `title` — the
+ * collection is `type`, and the title lives in `data`. Status is a plain string.
+ */
 export interface ContentItem {
   id: string;
-  collection: string;
-  status?: string;
+  type: string;
+  slug?: string | null;
+  status: string;
   data: Record<string, unknown>;
-  title?: string;
 }
 
+/** EmDash content list filter (the `where` clause): exact match on status/locale. */
+export interface ContentListWhere {
+  status?: string;
+  locale?: string;
+}
+
+export interface ContentListOptions {
+  limit?: number;
+  cursor?: string;
+  where?: ContentListWhere;
+  orderBy?: Record<string, "asc" | "desc">;
+}
+
+/**
+ * EmDash content API. NOTE: `list(collection, options)` — collection is a
+ * POSITIONAL first arg, and status filtering goes in `options.where.status`
+ * (there is no top-level `status` option). `get(collection, id)`.
+ */
 export interface ContentAccess {
   get(collection: string, id: string): Promise<ContentItem | null>;
-  list(options: {
-    collection: string;
-    status?: string;
-    limit?: number;
-    cursor?: string;
-  }): Promise<{ items: ContentItem[]; cursor?: string; hasMore: boolean }>;
+  list(
+    collection: string,
+    options?: ContentListOptions,
+  ): Promise<{ items: ContentItem[]; cursor?: string; hasMore: boolean }>;
 }
 
 export interface HttpAccess {

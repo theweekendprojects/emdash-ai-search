@@ -113,10 +113,10 @@ export class BackfillService {
         return { done: true, processedThisBatch: 0 };
       }
 
-      const page = await this.ctx.content!.list({
-        collection: collectionId,
-        // No status filter: we need to SEE unpublished/removed docs to purge them.
-        // decideDoc() classifies each item; only published ones are indexed.
+      // list(collection, options); NO where.status filter here on purpose: we
+      // need to SEE unpublished/removed docs to purge them. decideDoc()
+      // classifies each item; only published ones are indexed.
+      const page = await this.ctx.content!.list(collectionId, {
         limit: BATCH_SIZE,
         cursor: state.job.cursor ?? undefined,
       });
@@ -213,7 +213,7 @@ export class BackfillService {
     item: ContentItem,
   ): Promise<{ processed: number; skipped: number; removed: number; errors: number }> {
     const docId = `${collectionId}:${item.id}`;
-    const title = item.title ?? String(item.data?.title ?? "Untitled");
+    const title = String(item.data?.title ?? item.data?.name ?? "Untitled");
     const isPublished = !item.status || item.status === "published";
     const hash = contentHash(title, item.data ?? {});
     const prior = await this.docs.get(docId);

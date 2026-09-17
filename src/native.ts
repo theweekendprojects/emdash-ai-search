@@ -65,6 +65,19 @@ export function createPlugin() {
     id: "ai-search",
     version: "0.4.0",
 
+    // Capabilities/storage MUST be declared here (in definePlugin), like
+    // emdash-smtp does — this is what grants the runtime ctx.kv / ctx.content and
+    // provisions storage. Declaring them only on the build-time descriptor is NOT
+    // enough (that caused "Cannot read properties of undefined (reading 'kv')").
+    capabilities: ["content:read", "network:request"],
+    allowedHosts: ["api.cloudflare.com"],
+    storage: {
+      index_meta: { indexes: ["status", "lastSyncAt"] },
+      chunk_map: { indexes: ["collectionId", "updatedAt"] },
+      backfill_job: { indexes: ["phase", "updatedAt"] },
+      doc_state: { indexes: ["collectionId", "indexedAt"] },
+    },
+
     admin: {
       entry: "emdash-ai-search/admin",
       pages: [{ path: "/", label: "AI Search", icon: "magnifying-glass" }],
@@ -143,32 +156,37 @@ export function createPlugin() {
       },
     },
 
+    // NB: native ROUTE handlers receive the plugin context as the FIRST argument
+    // (routeCtx), which carries both ctx.kv/ctx.content AND .input — same shape
+    // emdash-smtp uses (`handler: (routeCtx) => ... ctx: routeCtx`). (Contrast
+    // HOOK handlers above, which are (event, ctx).) Using a phantom 2nd arg as
+    // the context was undefined → "Cannot read properties of undefined (reading 'kv')".
     routes: {
       search: {
         public: true,
-        handler: async (routeCtx: any, ctx: any) => routeSearch(asCtx(ctx), bindingFactory(), routeCtx.input ?? {}),
+        handler: async (routeCtx: any) => routeSearch(asCtx(routeCtx), bindingFactory(), routeCtx.input ?? {}),
       },
       chat: {
         public: true,
-        handler: async (routeCtx: any, ctx: any) => routeChat(asCtx(ctx), bindingFactory(), routeCtx.input ?? {}),
+        handler: async (routeCtx: any) => routeChat(asCtx(routeCtx), bindingFactory(), routeCtx.input ?? {}),
       },
       // Native-only: SSE streaming chat. Returns a raw Response, which only works
       // in the host isolate (native), not through the sandbox route bridge.
       "chat/stream": {
         public: true,
-        handler: async (routeCtx: any, ctx: any) => routeChatStream(asCtx(ctx), bindingFactory(), routeCtx.input ?? {}),
+        handler: async (routeCtx: any) => routeChatStream(asCtx(routeCtx), bindingFactory(), routeCtx.input ?? {}),
       },
       index: {
-        handler: async (routeCtx: any, ctx: any) => routeIndex(asCtx(ctx), bindingFactory(), routeCtx.input ?? {}),
+        handler: async (routeCtx: any) => routeIndex(asCtx(routeCtx), bindingFactory(), routeCtx.input ?? {}),
       },
       sync: {
-        handler: async (_routeCtx: any, ctx: any) => routeSync(asCtx(ctx), bindingFactory()),
+        handler: async (routeCtx: any) => routeSync(asCtx(routeCtx), bindingFactory()),
       },
       status: {
-        handler: async (_routeCtx: any, ctx: any) => routeStatus(asCtx(ctx), bindingFactory()),
+        handler: async (routeCtx: any) => routeStatus(asCtx(routeCtx), bindingFactory()),
       },
       admin: {
-        handler: async (routeCtx: any, ctx: any) => handleAdmin(asCtx(ctx), bindingFactory(), routeCtx.input),
+        handler: async (routeCtx: any) => handleAdmin(asCtx(routeCtx), bindingFactory(), routeCtx.input),
       },
     },
   });

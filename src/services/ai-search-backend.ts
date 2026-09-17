@@ -49,7 +49,11 @@ export class AiSearchBackend implements SearchBackend {
   }
 
   async chat(question: string, _filters?: SearchFilters): Promise<ChatResponse> {
-    const r = await this.client.chat(question, { model: this.opts.chatModel, maxNumResults: this.opts.resultsLimit });
+    // NOTE: do NOT pass a `model` override to the managed AI Search instance —
+    // it uses the generation model configured on the instance itself. Passing a
+    // Workers-AI model id here makes chat/completions fail with
+    // "AiSearchError: Internal Error" (the dashboard Playground sends none).
+    const r = await this.client.chat(question, { maxNumResults: this.opts.resultsLimit });
     const byKey = new Map<string, ChatCitation>();
     for (const c of r.chunks) {
       const key = c.item?.key ?? c.id;
@@ -66,7 +70,8 @@ export class AiSearchBackend implements SearchBackend {
   }
 
   chatStream(question: string, _filters?: SearchFilters): AsyncIterable<string> {
-    return this.client.chatStream(question, { model: this.opts.chatModel, maxNumResults: this.opts.resultsLimit });
+    // Same as chat(): no model override for the managed instance.
+    return this.client.chatStream(question, { maxNumResults: this.opts.resultsLimit });
   }
 
   async indexDocument(collectionId: string, contentId: string): Promise<void> {
@@ -75,7 +80,7 @@ export class AiSearchBackend implements SearchBackend {
       await this.removeDocument(collectionId, contentId);
       return;
     }
-    const md = renderMarkdown(item.title ?? String(item.data?.title ?? "Untitled"), item.data);
+    const md = renderMarkdown(titleOf(item), item.data);
     await this.r2.putText(pageKey(collectionId, contentId), md);
     // AI Search re-indexes the bucket on its own schedule — no explicit sync call.
   }
@@ -89,9 +94,12 @@ export class AiSearchBackend implements SearchBackend {
     let cursor: string | undefined;
     try {
       do {
-        const page = await this.ctx.content!.list({ collection: collectionId, status: "published", limit: 100, cursor });
+        // EmDash content API: list(collection, options); status filter goes in
+        // `where`, NOT a top-level `status`. Title lives in item.data (ContentItem
+        // has no top-level title). Getting this wrong silently returns 0 items.
+        const page = await this.ctx.content!.list(collectionId, { where: { status: "published" }, limit: 100, cursor });
         for (const item of page.items) {
-          const md = renderMarkdown(item.title ?? String(item.data?.title ?? "Untitled"), item.data);
+          const md = renderMarkdown(titleOf(item), item.data);
           await this.r2.putText(pageKey(collectionId, item.id), md);
           count++;
         }
@@ -128,6 +136,12 @@ export class AiSearchBackend implements SearchBackend {
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
+
+/** EmDash ContentItem has no top-level title; it lives in data.{title,name}. */
+function titleOf(item: { data?: Record<string, unknown> }): string {
+  const t = item.data?.title ?? item.data?.name;
+  return typeof t === "string" && t.trim() ? t : "Untitled";
+}
 
 /** Render a content item to markdown for R2 (front-matter-ish title + body). */
 function renderMarkdown(title: string, data: Record<string, unknown>): string {

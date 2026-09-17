@@ -24,6 +24,24 @@ export function aiSearch(options: AiSearchOptions = {}): PluginDescriptor<AiSear
     entrypoint: "emdash-ai-search/native",
     componentsEntry: "emdash-ai-search/astro",
     adminEntry: "emdash-ai-search/admin",
+    // Capabilities MUST be declared on the descriptor (like emdash-smtp does) or
+    // EmDash grants the plugin a context without ctx.kv / ctx.content — which
+    // caused "Cannot read properties of undefined (reading 'kv')" at runtime.
+    //   - content:read    → ctx.content.list()/get() to pull items to index +
+    //                       the content lifecycle hooks (afterPublish, etc.)
+    //   - network:request → reserved for the sandboxed REST path; harmless here.
+    capabilities: ["content:read", "network:request"],
+    allowedHosts: ["api.cloudflare.com"],
+    // Plugin-scoped storage collections (provisioned by the host). Same set the
+    // sandboxed manifest declares.
+    storage: {
+      index_meta: { indexes: ["status", "lastSyncAt"] },
+      chunk_map: { indexes: ["collectionId", "updatedAt"] },
+      backfill_job: { indexes: ["phase", "updatedAt"] },
+      doc_state: { indexes: ["collectionId", "indexedAt"] },
+    },
+    adminPages: [{ path: "/", label: "AI Search", icon: "magnifying-glass" }],
+    adminWidgets: [{ id: "ai-search-status", title: "AI Search Index", size: "half" }],
     options,
   };
 }

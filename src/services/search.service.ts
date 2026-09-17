@@ -71,11 +71,11 @@ export class SearchService {
     for (const item of items) {
       const chunks = this.chunking.chunkContent(
         item.id,
-        item.collection,
-        item.title ?? String(item.data?.title ?? "Untitled"),
+        item.type,
+        String(item.data?.title ?? item.data?.name ?? "Untitled"),
         item.data,
         { status: item.status ?? "published" },
-        item.collection,
+        item.type,
       );
       totalChunks += chunks.length;
       try {
@@ -184,11 +184,11 @@ export class SearchService {
     }
     const chunks = this.chunking.chunkContent(
       item.id,
-      item.collection,
-      item.title ?? String(item.data?.title ?? "Untitled"),
+      item.type,
+      String(item.data?.title ?? item.data?.name ?? "Untitled"),
       item.data,
       { status: item.status ?? "published" },
-      item.collection,
+      item.type,
     );
     await this.upsertDocument(collectionId, contentId, chunks, item.status ?? "published");
   }
@@ -202,11 +202,11 @@ export class SearchService {
     }
     const chunks = this.chunking.chunkContent(
       item.id,
-      item.collection,
-      item.title ?? String(item.data?.title ?? "Untitled"),
+      item.type,
+      String(item.data?.title ?? item.data?.name ?? "Untitled"),
       item.data,
       { status: item.status ?? "draft" },
-      item.collection,
+      item.type,
     );
     await this.upsertDocument(collectionId, contentId, chunks, item.status ?? "draft");
   }
@@ -262,9 +262,8 @@ export class SearchService {
     const all: ContentItem[] = [];
     let cursor: string | undefined;
     do {
-      const page = await this.ctx.content!.list({
-        collection: collectionId,
-        status: "published",
+      const page = await this.ctx.content!.list(collectionId, {
+        where: { status: "published" },
         limit: 100,
         cursor,
       });

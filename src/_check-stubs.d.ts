@@ -22,6 +22,11 @@ declare module "emdash" {
     entrypoint?: string;
     componentsEntry?: string;
     adminEntry?: string;
+    capabilities?: string[];
+    allowedHosts?: string[];
+    storage?: Record<string, { indexes?: (string | string[])[]; uniqueIndexes?: (string | string[])[] }>;
+    adminPages?: { path: string; label: string; icon?: string }[];
+    adminWidgets?: { id: string; title?: string; size?: string }[];
     options?: T;
   }
 }
