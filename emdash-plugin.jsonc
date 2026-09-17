@@ -1,0 +1,60 @@
+{
+  "$schema": "./node_modules/@emdash-cms/plugin-cli/schemas/emdash-plugin.schema.json",
+
+  "slug": "rag-search",
+  "publisher": "did:plc:REPLACE_WITH_YOUR_ATMOSPHERE_DID",
+
+  "license": "MIT",
+  "author": { "name": "Ported from SonicJS ai-search (lane711/sonicjs, MIT)" },
+  "security": { "email": "security@example.com" },
+  "description": "Semantic search + RAG chat over your content. TWO backends, chosen in Settings: 'Cloudflare AI Search' (managed — auto chunk/embed/index/search, minimal setup, the DEFAULT) and 'Vectorize' (self-managed pipeline — advanced control). THIS manifest configures the SANDBOXED build (Cloudflare REST APIs over ctx.http); the native build (src/native.ts) uses bindings and is configured in astro.config.mjs. NOTE: the injectable front-end chat widget (Portable Text 'AI Chat' block) is NATIVE-ONLY per EmDash docs.",
+
+  // Real capabilities (per EmDash SKILL.md), for the SANDBOXED build:
+  //   - content:read     → ctx.content.list()/get() to pull items to index
+  //   - network:request  → ctx.http.fetch() to the Cloudflare REST APIs:
+  //                        AI Search (search/chat), Vectorize, Workers AI, and
+  //                        R2 (writing page files the AI Search backend indexes).
+  //                        Fenced to allowedHosts below.
+  // Sandboxed plugins get NO raw bindings — that's why the sandboxed build uses
+  // REST. (The native build reaches AI/Vectorize/AI_SEARCH/R2 bindings directly.)
+  "capabilities": ["content:read", "network:request"],
+
+  // ctx.http.fetch is fenced to these hosts. Cloudflare AI + Vectorize REST APIs
+  // live on api.cloudflare.com. Add your own vector endpoint host if you use one.
+  "allowedHosts": ["api.cloudflare.com"],
+
+  // Plugin-scoped storage (no capability needed). Replaces the D1 tables from v0.1.
+  //   - index_meta: one record per collection (indexing status)
+  //   - chunk_map:  content_id -> chunk ids, so deletes/re-index purge precisely
+  "storage": {
+    "index_meta": { "indexes": ["status", "lastSyncAt"] },
+    "chunk_map": { "indexes": ["collectionId", "updatedAt"] },
+    "backfill_job": { "indexes": ["phase", "updatedAt"] },
+    "doc_state": { "indexes": ["collectionId", "indexedAt"] }
+  },
+
+  // The admin page ("/") is driven by the `admin` route (Block Kit): it renders
+  // the settings form + index-status table + backfill actions. settingsSchema is
+  // ALSO kept below so the host can render a basic fallback settings form; both
+  // read/write the same settings:* KV keys.
+  "admin": {
+    "pages": [{ "path": "/", "label": "RAG Search", "icon": "magnifying-glass" }],
+    "widgets": [{ "id": "rag-status", "title": "RAG Index", "size": "half" }],
+    "settingsSchema": {
+      "kbBackend": { "type": "select", "label": "Retrieval backend", "default": "ai-search", "options": [{ "label": "Cloudflare AI Search (managed, recommended)", "value": "ai-search" }, { "label": "Vectorize (self-managed, advanced)", "value": "vectorize" }] },
+      "cfAccountId": { "type": "text", "label": "Cloudflare Account ID", "default": "" },
+      "cfApiToken": { "type": "secret", "label": "Cloudflare API Token" },
+      "chatModel": { "type": "text", "label": "Chat / generation model", "default": "@cf/meta/llama-3.1-8b-instruct" },
+      "resultsLimit": { "type": "number", "label": "Results Per Query", "default": 20 },
+      "maxTokens": { "type": "number", "label": "Chat max answer tokens", "default": 512 },
+      "selectedCollections": { "type": "text", "label": "Indexed Collections (JSON array)", "default": "[]" },
+      "indexDrafts": { "type": "toggle", "label": "Also index drafts (index on every save, not just publish)", "default": false },
+      "aiSearchInstance": { "type": "text", "label": "AI Search instance name", "default": "emdash-rag" },
+      "aiSearchBucket": { "type": "text", "label": "AI Search R2 bucket", "default": "emdash-rag-content" },
+      "vectorizeIndex": { "type": "text", "label": "Vectorize Index Name", "default": "emdash-rag" },
+      "embeddingModel": { "type": "text", "label": "Embedding Model", "default": "@cf/baai/bge-base-en-v1.5" },
+      "vectorTopK": { "type": "number", "label": "Vector TopK", "default": 50 },
+      "chatTopK": { "type": "number", "label": "Chat context chunks", "default": 6 }
+    }
+  }
+}

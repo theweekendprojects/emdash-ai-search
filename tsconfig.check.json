@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": [],
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "emdash/plugin": ["./src/_check-stubs.d.ts"],
+      "emdash": ["./src/_check-stubs.d.ts"],
+      "cloudflare:workers": ["./src/_check-stubs.d.ts"],
+      "*.astro": ["./src/_check-stubs.d.ts"]
+    }
+  },
+  "include": ["src/**/*"],
+  "exclude": ["src/self-check.ts", "src/_check-stubs.d.ts", "src/astro/**/*.astro"]
+}

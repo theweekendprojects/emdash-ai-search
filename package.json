@@ -1,0 +1,52 @@
+{
+  "name": "@emdash/rag",
+  "version": "0.3.0",
+  "description": "Semantic search plugin for EmDash CMS. Two modes: sandboxed (Cloudflare REST APIs via ctx.http, API-token config, registry-installable) and native (Workers AI + Vectorize bindings, tokenless, trusted-only). Ported from the SonicJS ai-search plugin (MIT).",
+  "type": "module",
+  "exports": {
+    ".": "./dist/index.js",
+    "./native": "./dist/native.js",
+    "./sandbox": "./dist/plugin.js",
+    "./admin": "./dist/admin.js",
+    "./astro": "./dist/astro/index.js",
+    "./components": "./src/astro/ChatWidget.astro"
+  },
+  "files": [
+    "dist",
+    "src/astro/ChatWidget.astro",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "emdash-plugin build",
+    "build:native": "tsc",
+    "validate": "emdash-plugin validate",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "self-check": "tsx src/self-check.ts"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "@emdash-cms/plugin-cli": ">=0.1.0",
+    "@emdash-cms/plugin-test": ">=0.1.0",
+    "emdash": ">=0.1.0",
+    "tsx": "^4.20.3",
+    "typescript": "^5.4.0",
+    "vitest": "^4.1.9"
+  },
+  "keywords": [
+    "emdash",
+    "emdash-plugin",
+    "rag",
+    "search",
+    "semantic-search",
+    "vectorize",
+    "workers-ai",
+    "cms",
+    "cms-plugin",
+    "knowledge-base"
+  ],
+  "license": "MIT",
+  "author": "Ported from SonicJS ai-search (lane711/sonicjs, MIT)"
+}
