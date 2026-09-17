@@ -37,24 +37,13 @@
   // the settings form + index-status table + backfill actions. settingsSchema is
   // ALSO kept below so the host can render a basic fallback settings form; both
   // read/write the same settings:* KV keys.
+  // The admin page ("/rag-search") is driven by the `admin` route (Block Kit): it
+  // renders the settings form + index-status table + backfill actions. The
+  // manifest schema (plugin-cli >=0.11) no longer accepts `settingsSchema`; all
+  // settings are edited via the Block Kit form in the `admin` route, which
+  // read/writes the same settings:* KV keys.
   "admin": {
-    "pages": [{ "path": "/", "label": "RAG Search", "icon": "magnifying-glass" }],
-    "widgets": [{ "id": "rag-status", "title": "RAG Index", "size": "half" }],
-    "settingsSchema": {
-      "kbBackend": { "type": "select", "label": "Retrieval backend", "default": "ai-search", "options": [{ "label": "Cloudflare AI Search (managed, recommended)", "value": "ai-search" }, { "label": "Vectorize (self-managed, advanced)", "value": "vectorize" }] },
-      "cfAccountId": { "type": "text", "label": "Cloudflare Account ID", "default": "" },
-      "cfApiToken": { "type": "secret", "label": "Cloudflare API Token" },
-      "chatModel": { "type": "text", "label": "Chat / generation model", "default": "@cf/meta/llama-3.1-8b-instruct" },
-      "resultsLimit": { "type": "number", "label": "Results Per Query", "default": 20 },
-      "maxTokens": { "type": "number", "label": "Chat max answer tokens", "default": 512 },
-      "selectedCollections": { "type": "text", "label": "Indexed Collections (JSON array)", "default": "[]" },
-      "indexDrafts": { "type": "toggle", "label": "Also index drafts (index on every save, not just publish)", "default": false },
-      "aiSearchInstance": { "type": "text", "label": "AI Search instance name", "default": "emdash-rag" },
-      "aiSearchBucket": { "type": "text", "label": "AI Search R2 bucket", "default": "emdash-rag-content" },
-      "vectorizeIndex": { "type": "text", "label": "Vectorize Index Name", "default": "emdash-rag" },
-      "embeddingModel": { "type": "text", "label": "Embedding Model", "default": "@cf/baai/bge-base-en-v1.5" },
-      "vectorTopK": { "type": "number", "label": "Vector TopK", "default": 50 },
-      "chatTopK": { "type": "number", "label": "Chat context chunks", "default": 6 }
-    }
+    "pages": [{ "path": "/rag-search", "label": "RAG Search", "icon": "magnifying-glass" }],
+    "widgets": [{ "id": "rag-status", "title": "RAG Index", "size": "half" }]
   }
 }

@@ -13,5 +13,8 @@
     "forceConsistentCasingInFileNames": true
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist"]
+  // src/astro ships as SOURCE (the .astro file can't be pre-compiled; the
+  // consuming Astro site compiles it). Excluded from tsc so dist/ doesn't carry
+  // a dist/astro/index.js whose `import "./ChatWidget.astro"` can't resolve.
+  "exclude": ["node_modules", "dist", "src/astro"]
 }
