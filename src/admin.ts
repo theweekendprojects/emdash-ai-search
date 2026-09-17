@@ -223,6 +223,47 @@ async function render(ctx: Ctx, factory: BackendFactory, toast?: Blocks["toast"]
     },
   );
 
+  // ── Chat widget (auto-injected site-wide) ───────────────────────────────────
+  blocks.push({ type: "divider" });
+  blocks.push({ type: "header", text: "Chat widget" });
+  blocks.push({
+    type: "context",
+    text:
+      "When on, a floating chat bubble is added to every public page automatically — " +
+      "no code changes needed. Turn it off if you prefer to place the “AI Chat” block " +
+      "on specific pages yourself (otherwise you'd get two bubbles).",
+  });
+
+  fields.push(
+    {
+      type: "toggle",
+      action_id: "autoInjectWidget",
+      label: "Show floating chat bubble on all pages",
+      initial_value: settings.autoInjectWidget,
+    },
+    {
+      type: "text_input",
+      action_id: "widgetTitle",
+      label: "Widget title",
+      initial_value: settings.widgetTitle,
+      condition: { field: "autoInjectWidget", eq: true },
+    },
+    {
+      type: "text_input",
+      action_id: "widgetWelcome",
+      label: "Welcome message",
+      initial_value: settings.widgetWelcome,
+      condition: { field: "autoInjectWidget", eq: true },
+    },
+    {
+      type: "text_input",
+      action_id: "widgetAccent",
+      label: "Accent color (hex)",
+      initial_value: settings.widgetAccent,
+      condition: { field: "autoInjectWidget", eq: true },
+    },
+  );
+
   blocks.push({ type: "form", block_id: "settings", fields, submit: { label: "Save settings", action_id: "save_settings" } });
 
   // ── Backfill (resumable, cron-drained) ──────────────────────────────────────
@@ -404,6 +445,11 @@ async function saveSettings(ctx: Ctx, v: Record<string, unknown>): Promise<void>
   await setIf("chatRateLimitPerDay", Number(v.chatRateLimitPerDay ?? 150));
   await ctx.kv.set("settings:enableTurnstile", v.enableTurnstile === true);
   await setIf("turnstileSiteKey", v.turnstileSiteKey);
+  // Auto-injected widget
+  if ("autoInjectWidget" in v) await ctx.kv.set("settings:autoInjectWidget", v.autoInjectWidget === true);
+  await setIf("widgetTitle", v.widgetTitle);
+  await setIf("widgetWelcome", v.widgetWelcome);
+  await setIf("widgetAccent", v.widgetAccent);
 }
 
 function normalizeCollections(input: unknown): string {

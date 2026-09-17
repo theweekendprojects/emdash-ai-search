@@ -30,7 +30,9 @@ export function aiSearch(options: AiSearchOptions = {}): PluginDescriptor<AiSear
     //   - content:read    → ctx.content.list()/get() to pull items to index +
     //                       the content lifecycle hooks (afterPublish, etc.)
     //   - network:request → reserved for the sandboxed REST path; harmless here.
-    capabilities: ["content:read", "network:request"],
+    // page-fragments:register lets the plugin inject the floating chat bubble
+    // site-wide (see the page:fragments hook in native.ts). MUST match definePlugin().
+    capabilities: ["content:read", "network:request", "hooks.page-fragments:register"],
     // challenges.cloudflare.com is needed for the optional Turnstile verify call.
     allowedHosts: ["api.cloudflare.com", "challenges.cloudflare.com"],
     // Plugin-scoped storage collections (provisioned by the host). MUST match the

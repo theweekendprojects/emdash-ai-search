@@ -55,6 +55,16 @@ export interface SearchSettings {
   enableTurnstile: boolean;
   /** Turnstile site key (required if enableTurnstile is true) */
   turnstileSiteKey: string;
+
+  // ── Auto-injected floating widget (site-wide, no source edits) ──────────────
+  /** Inject a floating chat bubble on every public page automatically (default true). */
+  autoInjectWidget: boolean;
+  /** Panel title for the auto-injected bubble. */
+  widgetTitle: string;
+  /** First assistant bubble for the auto-injected bubble. */
+  widgetWelcome: string;
+  /** Accent colour (hex) for the auto-injected bubble. */
+  widgetAccent: string;
 }
 
 export const DEFAULT_SETTINGS: SearchSettings = {
@@ -76,6 +86,11 @@ export const DEFAULT_SETTINGS: SearchSettings = {
   chatRateLimitPerDay: 150,
   enableTurnstile: false,
   turnstileSiteKey: "",
+  // Auto-injected widget
+  autoInjectWidget: true,
+  widgetTitle: "Ask about this site",
+  widgetWelcome: "Hi! Ask me anything about this site.",
+  widgetAccent: "#465fff",
 };
 
 export interface IndexStatusRecord {

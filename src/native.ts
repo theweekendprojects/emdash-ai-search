@@ -38,6 +38,7 @@ import {
   routeStatus,
   routeChat,
   routeChatStream,
+  buildPageFragments,
 } from "./core";
 import { handleAdmin } from "./admin";
 
@@ -69,7 +70,7 @@ export function createPlugin() {
     // emdash-smtp does — this is what grants the runtime ctx.kv / ctx.content and
     // provisions storage. Declaring them only on the build-time descriptor is NOT
     // enough (that caused "Cannot read properties of undefined (reading 'kv')").
-    capabilities: ["content:read", "network:request"],
+    capabilities: ["content:read", "network:request", "hooks.page-fragments:register"],
     allowedHosts: ["api.cloudflare.com", "challenges.cloudflare.com"],
     storage: {
       index_meta: { indexes: ["status", "lastSyncAt"] },
@@ -153,6 +154,20 @@ export function createPlugin() {
             await onRemove(asCtx(ctx), bindingFactory(), event.collection, String(event.id));
           } catch (err) {
             ctx.log.warn("[ai-search] afterDelete failed", { err: String(err) });
+          }
+        },
+      },
+
+      // Site-wide floating chat bubble — injected into every public page with no
+      // source edits by the site author. Toggle off in Settings (autoInjectWidget)
+      // if you prefer the per-page "AI Chat" Portable Text block instead.
+      "page:fragments": {
+        handler: async (event: any, ctx: any) => {
+          try {
+            return await buildPageFragments(asCtx(ctx), String(event?.page?.path ?? ""));
+          } catch (err) {
+            ctx.log.warn("[ai-search] page:fragments failed", { err: String(err) });
+            return null;
           }
         },
       },

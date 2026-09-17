@@ -16,6 +16,10 @@ import type { Ctx } from "./services/host";
 import type { SearchBackend } from "./services/search-backend";
 import { DEFAULT_SETTINGS, type SearchSettings } from "./services/types";
 import { BackfillService } from "./services/backfill.service";
+import { resolveWidgetConfig, widgetMarkup, widgetStyles, widgetScript } from "./widget-runtime";
+
+/** Version of Deep Chat loaded for the auto-injected bubble (matches package.json). */
+const DEEP_CHAT_CDN = "https://cdn.jsdelivr.net/npm/deep-chat@1.4.11/dist/deepChat.bundle.js";
 
 /** Cron schedule name for the backfill drainer. */
 export const BACKFILL_CRON = "ai-search-backfill";
@@ -55,6 +59,11 @@ export async function loadSettings(ctx: Ctx): Promise<SearchSettings> {
     chatRateLimitPerDay: Number(await get("chatRateLimitPerDay", DEFAULT_SETTINGS.chatRateLimitPerDay)),
     enableTurnstile: (await get<boolean>("enableTurnstile", DEFAULT_SETTINGS.enableTurnstile)) === true,
     turnstileSiteKey: await get("turnstileSiteKey", DEFAULT_SETTINGS.turnstileSiteKey),
+    // Auto-injected widget (default ON — appears site-wide with no source edits)
+    autoInjectWidget: (await get<boolean>("autoInjectWidget", DEFAULT_SETTINGS.autoInjectWidget)) !== false,
+    widgetTitle: await get("widgetTitle", DEFAULT_SETTINGS.widgetTitle),
+    widgetWelcome: await get("widgetWelcome", DEFAULT_SETTINGS.widgetWelcome),
+    widgetAccent: await get("widgetAccent", DEFAULT_SETTINGS.widgetAccent),
   };
 }
 
@@ -87,6 +96,10 @@ export async function onInstall(ctx: Ctx): Promise<void> {
     "settings:chatRateLimitPerDay": DEFAULT_SETTINGS.chatRateLimitPerDay,
     "settings:enableTurnstile": DEFAULT_SETTINGS.enableTurnstile,
     "settings:turnstileSiteKey": DEFAULT_SETTINGS.turnstileSiteKey,
+    "settings:autoInjectWidget": DEFAULT_SETTINGS.autoInjectWidget,
+    "settings:widgetTitle": DEFAULT_SETTINGS.widgetTitle,
+    "settings:widgetWelcome": DEFAULT_SETTINGS.widgetWelcome,
+    "settings:widgetAccent": DEFAULT_SETTINGS.widgetAccent,
   };
   for (const [k, v] of Object.entries(defaults)) {
     if ((await ctx.kv.get(k)) === null) await ctx.kv.set(k, v);
@@ -224,6 +237,85 @@ export async function routeChatStream(ctx: Ctx, factory: BackendFactory, body: R
       yield JSON.stringify({ delta: r.answer });
     }
   });
+}
+
+// ── Auto-injected site-wide widget (page:fragments) ──────────────────────────
+
+/** A page:fragments contribution (subset of EmDash's shape that we emit). */
+export type PageFragment =
+  | {
+      kind: "external-script";
+      placement: "body:end";
+      src: string;
+      async?: boolean;
+      defer?: boolean;
+      attributes?: Record<string, string>;
+      key: string;
+    }
+  | { kind: "inline-script"; placement: "body:end"; code: string; key: string }
+  | { kind: "html"; placement: "body:end"; html: string; key: string };
+
+/**
+ * Build the fragments that inject the floating chat bubble on EVERY public page,
+ * so a site author gets the widget with zero source edits. Returns null when
+ * auto-injection is disabled or on admin (`/_emdash/`) paths.
+ *
+ * Three body:end contributions:
+ *   1. the widget CSS + a host element (html)
+ *   2. the Deep Chat UMD bundle from a CDN (external-script) — an inline page
+ *      fragment can't resolve the `deep-chat` npm bare import, so we load the
+ *      prebuilt bundle which self-registers the <deep-chat> element
+ *   3. the widget markup + wiring (inline-script) that builds the bubble
+ *
+ * Editors who instead drop the "AI Chat" Portable Text block on a page can turn
+ * this off in Settings to avoid two bubbles.
+ */
+export async function buildPageFragments(ctx: Ctx, pagePath: string): Promise<PageFragment[] | null> {
+  if (typeof pagePath === "string" && pagePath.startsWith("/_emdash/")) return null;
+  const settings = await loadSettings(ctx);
+  if (!settings.autoInjectWidget) return null;
+
+  const cfg = resolveWidgetConfig({
+    uid: "aisearch-auto",
+    mode: "floating",
+    title: settings.widgetTitle,
+    welcome: settings.widgetWelcome,
+    accent: settings.widgetAccent,
+  });
+
+  const injector =
+    `(function(){` +
+    `var host=document.getElementById("aisearch-auto-host");` +
+    `if(!host||host.getAttribute("data-mounted"))return;` +
+    `host.setAttribute("data-mounted","1");` +
+    `host.insertAdjacentHTML("beforeend", ${JSON.stringify(widgetMarkup(cfg))});` +
+    widgetScript(cfg.uid) +
+    `})();`;
+
+  return [
+    {
+      kind: "html",
+      placement: "body:end",
+      html: `<style>${widgetStyles()}</style><div id="aisearch-auto-host"></div>`,
+      key: "aisearch-widget-style",
+    },
+    {
+      // The bundle is an ES module that self-registers <deep-chat> — load it as
+      // a module. Our inline script guards on customElements.whenDefined, so the
+      // async module load ordering is safe.
+      kind: "external-script",
+      placement: "body:end",
+      src: DEEP_CHAT_CDN,
+      attributes: { type: "module" },
+      key: "aisearch-deep-chat",
+    },
+    {
+      kind: "inline-script",
+      placement: "body:end",
+      code: injector,
+      key: "aisearch-widget",
+    },
+  ];
 }
 
 /**
