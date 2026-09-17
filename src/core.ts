@@ -1,30 +1,30 @@
 /**
- * Shared plugin core — hook + route logic that is IDENTICAL in both modes and
- * across both backends.
+ * Shared plugin core — hook + route logic, identical in native and sandboxed
+ * modes.
  *
- * The seam: everything here talks to a `SearchBackend` (search/chat/index/remove).
- * A `BackendFactory` (supplied per entry point — sandboxed vs native) builds the
- * right SearchBackend based on the `kbBackend` setting:
- *   - "ai-search" (default) → AiSearchBackend (managed)
- *   - "vectorize"           → VectorizeBackend (self-managed pipeline)
+ * There is ONE backend: Cloudflare AI Search (managed). Content is pushed into
+ * the instance's built-in storage via the Items API (indexed immediately per
+ * file — no R2, no Vectorize, no crawl, no sync job). Search and chat are served
+ * by Cloudflare's own public-endpoint UI snippets (bubble / search / chat page),
+ * which this plugin injects site-wide; the plugin no longer ships its own chat
+ * route or widget.
  *
- * Sandboxed entry → REST transports; native entry → binding transports. Neither
- * this file nor the hooks/routes know which backend or transport is in play.
+ * A `BackendFactory` (per entry point — sandboxed REST vs native binding) builds
+ * the `SearchBackend` used for indexing.
  */
 
 import type { Ctx } from "./services/host";
 import type { SearchBackend } from "./services/search-backend";
 import { DEFAULT_SETTINGS, type SearchSettings } from "./services/types";
 import { BackfillService } from "./services/backfill.service";
-import { resolveWidgetConfig, widgetMarkup, widgetStyles, widgetScript } from "./widget-runtime";
+import { buildSnippetFragments, chatPageHtml, type PageFragment } from "./snippets";
 
-/** Version of Deep Chat loaded for the auto-injected bubble (matches package.json). */
-const DEEP_CHAT_CDN = "https://cdn.jsdelivr.net/npm/deep-chat@1.4.11/dist/deepChat.bundle.js";
+export type { PageFragment } from "./snippets";
 
 /** Cron schedule name for the backfill drainer. */
 export const BACKFILL_CRON = "ai-search-backfill";
 
-/** Builds the selected SearchBackend for a given ctx + settings. Per entry point. */
+/** Builds the SearchBackend for a given ctx + settings. Per entry point. */
 export interface BackendFactory {
   build(ctx: Ctx, settings: SearchSettings): SearchBackend;
 }
@@ -39,36 +39,33 @@ export async function loadSettings(ctx: Ctx): Promise<SearchSettings> {
   } catch {
     selectedCollections = [];
   }
-  const backend = (await get<string>("kbBackend", DEFAULT_SETTINGS.kbBackend)) as SearchSettings["kbBackend"];
   return {
-    kbBackend: backend === "vectorize" ? "vectorize" : "ai-search",
     cfAccountId: await get("cfAccountId", DEFAULT_SETTINGS.cfAccountId),
     cfApiToken: await get("cfApiToken", DEFAULT_SETTINGS.cfApiToken),
     resultsLimit: Number(await get("resultsLimit", DEFAULT_SETTINGS.resultsLimit)),
     selectedCollections,
-    chatModel: await get("chatModel", DEFAULT_SETTINGS.chatModel),
-    maxTokens: Number(await get("maxTokens", DEFAULT_SETTINGS.maxTokens)),
     aiSearchInstance: await get("aiSearchInstance", DEFAULT_SETTINGS.aiSearchInstance),
-    aiSearchBucket: await get("aiSearchBucket", DEFAULT_SETTINGS.aiSearchBucket),
-    vectorizeIndex: await get("vectorizeIndex", DEFAULT_SETTINGS.vectorizeIndex),
-    embeddingModel: await get("embeddingModel", DEFAULT_SETTINGS.embeddingModel),
-    vectorTopK: Number(await get("vectorTopK", DEFAULT_SETTINGS.vectorTopK)),
-    chatTopK: Number(await get("chatTopK", DEFAULT_SETTINGS.chatTopK)),
-    // Security settings
-    chatRateLimitPerMin: Number(await get("chatRateLimitPerMin", DEFAULT_SETTINGS.chatRateLimitPerMin)),
-    chatRateLimitPerDay: Number(await get("chatRateLimitPerDay", DEFAULT_SETTINGS.chatRateLimitPerDay)),
-    enableTurnstile: (await get<boolean>("enableTurnstile", DEFAULT_SETTINGS.enableTurnstile)) === true,
-    turnstileSiteKey: await get("turnstileSiteKey", DEFAULT_SETTINGS.turnstileSiteKey),
-    // Auto-injected widget (default ON — appears site-wide with no source edits)
-    autoInjectWidget: (await get<boolean>("autoInjectWidget", DEFAULT_SETTINGS.autoInjectWidget)) !== false,
-    widgetTitle: await get("widgetTitle", DEFAULT_SETTINGS.widgetTitle),
-    widgetWelcome: await get("widgetWelcome", DEFAULT_SETTINGS.widgetWelcome),
-    widgetAccent: await get("widgetAccent", DEFAULT_SETTINGS.widgetAccent),
+    // Public endpoint + UI snippets (the site-facing search/chat UI)
+    publicEndpointUrl: await get("publicEndpointUrl", DEFAULT_SETTINGS.publicEndpointUrl),
+    showChatBubble: (await get<boolean>("showChatBubble", DEFAULT_SETTINGS.showChatBubble)) !== false,
+    showSearchModal: (await get<boolean>("showSearchModal", DEFAULT_SETTINGS.showSearchModal)) === true,
+    snippetTheme: (await get("snippetTheme", DEFAULT_SETTINGS.snippetTheme)) as SearchSettings["snippetTheme"],
+    snippetAccent: await get("snippetAccent", DEFAULT_SETTINGS.snippetAccent),
   };
 }
 
 export async function indexDraftsEnabled(ctx: Ctx): Promise<boolean> {
   return (await ctx.kv.get<boolean>("settings:indexDrafts")) === true;
+}
+
+/**
+ * Whether a collection is opted into indexing. If the operator hasn't selected
+ * any collections yet (fresh install), index everything — otherwise a brand-new
+ * site would silently index nothing. Once they narrow the list, we honor it.
+ */
+function isIndexedCollection(settings: SearchSettings, collection: string): boolean {
+  if (settings.selectedCollections.length === 0) return true;
+  return settings.selectedCollections.includes(collection);
 }
 
 async function backendFor(ctx: Ctx, factory: BackendFactory): Promise<SearchBackend> {
@@ -79,27 +76,15 @@ async function backendFor(ctx: Ctx, factory: BackendFactory): Promise<SearchBack
 
 export async function onInstall(ctx: Ctx): Promise<void> {
   const defaults: Record<string, unknown> = {
-    "settings:kbBackend": DEFAULT_SETTINGS.kbBackend,
     "settings:resultsLimit": DEFAULT_SETTINGS.resultsLimit,
     "settings:selectedCollections": "[]",
     "settings:indexDrafts": false,
-    "settings:chatModel": DEFAULT_SETTINGS.chatModel,
-    "settings:maxTokens": DEFAULT_SETTINGS.maxTokens,
     "settings:aiSearchInstance": DEFAULT_SETTINGS.aiSearchInstance,
-    "settings:aiSearchBucket": DEFAULT_SETTINGS.aiSearchBucket,
-    "settings:vectorizeIndex": DEFAULT_SETTINGS.vectorizeIndex,
-    "settings:embeddingModel": DEFAULT_SETTINGS.embeddingModel,
-    "settings:vectorTopK": DEFAULT_SETTINGS.vectorTopK,
-    "settings:chatTopK": DEFAULT_SETTINGS.chatTopK,
-    // Security settings
-    "settings:chatRateLimitPerMin": DEFAULT_SETTINGS.chatRateLimitPerMin,
-    "settings:chatRateLimitPerDay": DEFAULT_SETTINGS.chatRateLimitPerDay,
-    "settings:enableTurnstile": DEFAULT_SETTINGS.enableTurnstile,
-    "settings:turnstileSiteKey": DEFAULT_SETTINGS.turnstileSiteKey,
-    "settings:autoInjectWidget": DEFAULT_SETTINGS.autoInjectWidget,
-    "settings:widgetTitle": DEFAULT_SETTINGS.widgetTitle,
-    "settings:widgetWelcome": DEFAULT_SETTINGS.widgetWelcome,
-    "settings:widgetAccent": DEFAULT_SETTINGS.widgetAccent,
+    "settings:publicEndpointUrl": DEFAULT_SETTINGS.publicEndpointUrl,
+    "settings:showChatBubble": DEFAULT_SETTINGS.showChatBubble,
+    "settings:showSearchModal": DEFAULT_SETTINGS.showSearchModal,
+    "settings:snippetTheme": DEFAULT_SETTINGS.snippetTheme,
+    "settings:snippetAccent": DEFAULT_SETTINGS.snippetAccent,
   };
   for (const [k, v] of Object.entries(defaults)) {
     if ((await ctx.kv.get(k)) === null) await ctx.kv.set(k, v);
@@ -117,17 +102,23 @@ export async function onActivate(ctx: Ctx): Promise<void> {
 }
 
 export async function onAfterPublish(ctx: Ctx, factory: BackendFactory, collection: string, contentId: string): Promise<void> {
-  const backend = await backendFor(ctx, factory);
+  const settings = await loadSettings(ctx);
+  if (!isIndexedCollection(settings, collection)) return;
+  const backend = factory.build(ctx, settings);
   await backend.indexDocument(collection, contentId);
 }
 
 export async function onAfterSave(ctx: Ctx, factory: BackendFactory, collection: string, contentId: string): Promise<void> {
   if (!(await indexDraftsEnabled(ctx))) return;
-  const backend = await backendFor(ctx, factory);
+  const settings = await loadSettings(ctx);
+  if (!isIndexedCollection(settings, collection)) return;
+  const backend = factory.build(ctx, settings);
   await backend.indexDocument(collection, contentId);
 }
 
 export async function onRemove(ctx: Ctx, factory: BackendFactory, collection: string, contentId: string): Promise<void> {
+  // Always honor removals regardless of selection — a collection may have been
+  // de-selected AFTER items were indexed, and unpublish/delete must still purge.
   const backend = await backendFor(ctx, factory);
   await backend.removeDocument(collection, contentId);
 }
@@ -141,371 +132,39 @@ export async function routeSearch(ctx: Ctx, factory: BackendFactory, body: Recor
   return backend.search(query, body.filters as any, body.limit as number | undefined);
 }
 
-/**
- * Chat endpoint with security hardening:
- * - Origin/Referer validation (403 if not allowed)
- * - Per-IP rate limiting (429 if exceeded)
- * - Optional Turnstile verification
- */
-export async function routeChat(ctx: Ctx, factory: BackendFactory, body: Record<string, unknown>) {
-  const settings = await loadSettings(ctx);
-
-  // NOTE: EmDash wraps every route return in `{ success: true, data: <value> }`
-  // and serves it with the route's *successful* HTTP status — a sandboxed/native
-  // route CANNOT choose 403/429 by returning a `status` field (verified against
-  // the EmDash API-routes contract). So we return a stable application-level
-  // `{ error, code }` that the widget detects, rather than a fake `status`.
-
-  // Layer 1: Origin/Referer validation (belt-and-braces; core CSRF already 403s
-  // cross-origin callers before we get here).
-  if (!validateOrigin(ctx)) {
-    return { error: "This chat only works from the site itself.", code: "FORBIDDEN_ORIGIN" };
-  }
-
-  // Layer 2: Rate limiting
-  const rateLimitResult = await checkRateLimit(ctx, settings);
-  if (rateLimitResult.exceeded) {
-    return { error: "Too many requests — please slow down.", code: "RATE_LIMITED" };
-  }
-
-  // Layer 3: Turnstile verification (opt-in)
-  if (settings.enableTurnstile) {
-    const turnstileResult = await verifyTurnstile(ctx, settings);
-    if (!turnstileResult.verified) {
-      return { error: "Verification failed.", code: "TURNSTILE_FAILED" };
-    }
-  }
-
-  const question = String(body.question ?? body.query ?? "").trim();
-  if (!question) return { error: "question required", code: "BAD_REQUEST" };
-  const backend = await backendFor(ctx, factory);
-  return backend.chat(question, body.filters as any);
-}
+// ── Site-wide UI snippet injection (page:fragments) ──────────────────────────
 
 /**
- * Native-only streaming chat. Returns a real SSE `Response` (`data: {delta}` +
- * `[DONE]`). Do NOT wire this into a sandboxed route — the sandbox bridge wraps
- * route results in a JSON envelope and refuses raw Responses (per EmDash docs),
- * so streaming only works from the host isolate (native mode). Falls back to a
- * single JSON `data:` event if the backend can't stream.
- */
-export async function routeChatStream(ctx: Ctx, factory: BackendFactory, body: Record<string, unknown>): Promise<Response> {
-  const settings = await loadSettings(ctx);
-
-  // Layer 1: Origin/Referer validation (see routeChat note).
-  if (!validateOrigin(ctx)) {
-    return sseResponse(async function* () {
-      yield JSON.stringify({ error: "This chat only works from the site itself." });
-    });
-  }
-
-  // Layer 2: Rate limiting
-  const rateLimitResult = await checkRateLimit(ctx, settings);
-  if (rateLimitResult.exceeded) {
-    return sseResponse(async function* () {
-      yield JSON.stringify({ error: "Too many requests — please slow down." });
-    });
-  }
-
-  // Layer 3: Turnstile verification (opt-in)
-  if (settings.enableTurnstile) {
-    const turnstileResult = await verifyTurnstile(ctx, settings);
-    if (!turnstileResult.verified) {
-      return sseResponse(async function* () {
-        yield JSON.stringify({ error: "Verification failed." });
-      });
-    }
-  }
-
-  const question = String(body.question ?? body.query ?? "").trim();
-  if (!question) {
-    return sseResponse(async function* () {
-      yield JSON.stringify({ error: "question required" });
-    });
-  }
-  const backend = await backendFor(ctx, factory);
-  const filters = body.filters as any;
-
-  return sseResponse(async function* () {
-    if (backend.chatStream) {
-      for await (const delta of backend.chatStream(question, filters)) {
-        if (delta) yield JSON.stringify({ delta });
-      }
-    } else {
-      // Backend can't stream — emit the whole answer as one event.
-      const r = await backend.chat(question, filters);
-      yield JSON.stringify({ delta: r.answer });
-    }
-  });
-}
-
-// ── Auto-injected site-wide widget (page:fragments) ──────────────────────────
-
-/** A page:fragments contribution (subset of EmDash's shape that we emit). */
-export type PageFragment =
-  | {
-      kind: "external-script";
-      placement: "body:end";
-      src: string;
-      async?: boolean;
-      defer?: boolean;
-      attributes?: Record<string, string>;
-      key: string;
-    }
-  | { kind: "inline-script"; placement: "body:end"; code: string; key: string }
-  | { kind: "html"; placement: "body:end"; html: string; key: string };
-
-/**
- * Build the fragments that inject the floating chat bubble on EVERY public page,
- * so a site author gets the widget with zero source edits. Returns null when
- * auto-injection is disabled or on admin (`/_emdash/`) paths.
+ * Build the fragments that inject Cloudflare's AI Search UI snippets (a floating
+ * chat bubble and/or a Cmd/Ctrl+K search modal) on EVERY public page, so a site
+ * author gets working search + chat with zero source edits.
  *
- * Three body:end contributions:
- *   1. the widget CSS + a host element (html)
- *   2. the Deep Chat UMD bundle from a CDN (external-script) — an inline page
- *      fragment can't resolve the `deep-chat` npm bare import, so we load the
- *      prebuilt bundle which self-registers the <deep-chat> element
- *   3. the widget markup + wiring (inline-script) that builds the bubble
- *
- * Editors who instead drop the "AI Chat" Portable Text block on a page can turn
- * this off in Settings to avoid two bubbles.
+ * Returns null on admin (`/_emdash/`) paths or when no public endpoint URL is
+ * configured. The heavy lifting (which components, the script tag, styling) is
+ * in ./snippets so it stays testable and free of the runtime.
  */
 export async function buildPageFragments(ctx: Ctx, pagePath: string): Promise<PageFragment[] | null> {
   if (typeof pagePath === "string" && pagePath.startsWith("/_emdash/")) return null;
   const settings = await loadSettings(ctx);
-  if (!settings.autoInjectWidget) return null;
-
-  const cfg = resolveWidgetConfig({
-    uid: "aisearch-auto",
-    mode: "floating",
-    title: settings.widgetTitle,
-    welcome: settings.widgetWelcome,
-    accent: settings.widgetAccent,
-  });
-
-  const injector =
-    `(function(){` +
-    `var host=document.getElementById("aisearch-auto-host");` +
-    `if(!host||host.getAttribute("data-mounted"))return;` +
-    `host.setAttribute("data-mounted","1");` +
-    `host.insertAdjacentHTML("beforeend", ${JSON.stringify(widgetMarkup(cfg))});` +
-    widgetScript(cfg.uid) +
-    `})();`;
-
-  return [
-    {
-      kind: "html",
-      placement: "body:end",
-      html: `<style>${widgetStyles()}</style><div id="aisearch-auto-host"></div>`,
-      key: "aisearch-widget-style",
-    },
-    {
-      // The bundle is an ES module that self-registers <deep-chat> — load it as
-      // a module. Our inline script guards on customElements.whenDefined, so the
-      // async module load ordering is safe.
-      kind: "external-script",
-      placement: "body:end",
-      src: DEEP_CHAT_CDN,
-      attributes: { type: "module" },
-      key: "aisearch-deep-chat",
-    },
-    {
-      kind: "inline-script",
-      placement: "body:end",
-      code: injector,
-      key: "aisearch-widget",
-    },
-  ];
+  return buildSnippetFragments(settings);
 }
 
 /**
- * Validate Origin/Referer against the site origin (defence in depth).
- *
- * NOTE: EmDash core already rejects cross-origin requests to public plugin
- * routes with a CSRF_REJECTED 403 *before* this handler runs (verified live:
- * a forged `Origin` on /chat and /search both 403 at the core layer). This
- * function is a belt-and-braces second check, so it MUST fail OPEN whenever the
- * request/site metadata is missing or ambiguous — otherwise it would wrongly
- * block the legitimate same-origin traffic that core already let through.
- *
- * The plugin context exposes headers as a plain `Record<string,string>` with
- * lowercased keys (there is NO `.get()` — that was a bug), the request on
- * `ctx.request`, and the site on `ctx.site` (NOT `ctx.env.site`).
+ * Full-page chat UI route. Serves an HTML document that renders Cloudflare's
+ * `<chat-page-snippet>` pointed at the configured public endpoint. Returns a raw
+ * `Response` (native route). If no endpoint is configured, returns a short note.
  */
-function validateOrigin(ctx: Ctx): boolean {
-  const site = (ctx as any).site ?? ctx.env?.site;
-  const siteUrl: string | undefined = site?.url;
-  if (!siteUrl) return true; // No site config → allow (fail open).
-
-  let allowedOrigin: string;
-  try {
-    allowedOrigin = new URL(siteUrl).origin;
-  } catch {
-    return true; // Unparseable site url → don't block.
+export async function routeChatPage(ctx: Ctx): Promise<Response> {
+  const settings = await loadSettings(ctx);
+  const siteTitle = ((ctx as any).site?.name as string) || "Chat";
+  const html = chatPageHtml(settings, siteTitle);
+  if (!html) {
+    return new Response(
+      "AI Search chat is not configured yet. Set the public endpoint URL in the plugin settings.",
+      { status: 503, headers: { "content-type": "text/plain; charset=utf-8" } },
+    );
   }
-
-  const headers = (ctx as any).request?.headers as Record<string, string> | undefined;
-  if (!headers) return true; // No headers surface → fail open.
-
-  const readHeader = (name: string): string | undefined => {
-    if (typeof (headers as any).get === "function") return (headers as any).get(name) ?? undefined; // tolerate a real Headers instance
-    return headers[name] ?? headers[name.toLowerCase()];
-  };
-
-  const origin = readHeader("origin");
-  const referer = readHeader("referer");
-
-  // If neither header is present, this is likely a same-origin or
-  // server-to-server call that core already vetted — allow.
-  if (!origin && !referer) return true;
-
-  for (const candidate of [origin, referer]) {
-    if (!candidate) continue;
-    try {
-      if (new URL(candidate).origin === allowedOrigin) return true;
-    } catch {
-      // ignore invalid header value
-    }
-  }
-
-  return false;
-}
-
-/**
- * Best-effort client IP for rate-limit bucketing. requestMeta shape isn't
- * strictly documented, so probe common fields and fall back to the
- * cf-connecting-ip header (Cloudflare) before "unknown".
- */
-function clientIp(ctx: Ctx): string {
-  const meta = (ctx as any).requestMeta ?? {};
-  const fromMeta = meta.ip || meta.remoteAddress || meta.clientIp || meta.cf?.ip;
-  if (fromMeta) return String(fromMeta);
-  const headers = (ctx as any).request?.headers as Record<string, string> | undefined;
-  if (headers) {
-    const h =
-      headers["cf-connecting-ip"] || headers["x-real-ip"] || headers["x-forwarded-for"];
-    if (h) return String(h).split(",")[0].trim();
-  }
-  return (ctx as any).ip || "unknown";
-}
-
-/** Check per-IP rate limit (Layer 2 security). */
-async function checkRateLimit(ctx: Ctx, settings: SearchSettings): Promise<{ exceeded: boolean }> {
-  try {
-    const ip = clientIp(ctx);
-    const storage = ctx.storage?.rate_limit;
-    if (!storage) {
-      // Storage collection not provisioned (descriptor/manifest mismatch). Don't
-      // crash the request; log so the misconfiguration is visible.
-      ctx.log.warn("[ai-search] rate_limit storage missing — skipping rate limit");
-      return { exceeded: false };
-    }
-
-    const now = Math.floor(Date.now() / 1000);
-    const minuteWindowStart = Math.floor(now / 60) * 60;
-    const dailyWindowStart = Math.floor(now / 86400) * 86400;
-
-    const storageKey = `rate:${ip}`;
-
-    // NOTE: we intentionally use plain get()/put() rather than the
-    // getVersioned()/compareAndSet() conditional-write API. Although the EmDash
-    // docs list those methods, they are NOT present on the deployed core
-    // (verified live: "TypeError: storage.getVersioned is not a function" on
-    // every request → the limiter used to fail open and never trip). get()/put()
-    // exist on every version. The tiny race window under burst concurrency is an
-    // acceptable trade for a soft anti-abuse limit.
-    const record = ((await storage.get(storageKey)) as any) || {};
-    let minuteCount = record.minuteWindowStart === minuteWindowStart ? record.minuteCount || 0 : 0;
-    let dailyCount = record.dailyWindowStart === dailyWindowStart ? record.dailyCount || 0 : 0;
-
-    minuteCount++;
-    dailyCount++;
-
-    if (minuteCount > settings.chatRateLimitPerMin || dailyCount > settings.chatRateLimitPerDay) {
-      // Persist the incremented counters so the limit stays tripped for the window.
-      await storage.put(storageKey, {
-        ip,
-        minuteCount,
-        minuteWindowStart,
-        dailyCount,
-        dailyWindowStart,
-        lastRequestAt: now,
-      });
-      return { exceeded: true };
-    }
-
-    await storage.put(storageKey, {
-      ip,
-      minuteCount,
-      minuteWindowStart,
-      dailyCount,
-      dailyWindowStart,
-      lastRequestAt: now,
-    });
-  } catch (err) {
-    ctx.log.warn("[ai-search] rate limit check failed", { err: String(err) });
-    // Fail open on rate limit errors (don't block legitimate requests)
-  }
-
-  return { exceeded: false };
-}
-
-/** Verify Turnstile token (Layer 3 security, opt-in). */
-async function verifyTurnstile(ctx: Ctx, settings: SearchSettings): Promise<{ verified: boolean }> {
-  try {
-    const body = (ctx as any).input as Record<string, unknown>;
-    const token = body?.turnstileToken as string;
-
-    if (!token) {
-      return { verified: false };
-    }
-
-    // Call Cloudflare Turnstile verify API
-    const response = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        // NB: siteverify requires the Turnstile *secret* key, not the site key.
-        // This reuses turnstileSiteKey for now (Turnstile is off by default and
-        // untested end-to-end) — see review notes / README before enabling.
-        secret: settings.turnstileSiteKey,
-        response: token,
-        remoteip: clientIp(ctx),
-      }),
-    });
-
-    if (!response.ok) {
-      return { verified: false };
-    }
-
-    const result = await response.json();
-    return { verified: result.success === true };
-  } catch (err) {
-    ctx.log.warn("[ai-search] turnstile verification failed", { err: String(err) });
-    return { verified: false };
-  }
-}
-
-/** Wrap an async generator of JSON payload strings as an SSE Response. */
-function sseResponse(gen: () => AsyncIterable<string>): Response {
-  const encoder = new TextEncoder();
-  const stream = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      try {
-        for await (const payload of gen()) {
-          controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
-        }
-      } catch (err) {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: String(err) })}\n\n`));
-      } finally {
-        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-        controller.close();
-      }
-    },
-  });
-  return new Response(stream, {
-    headers: { "content-type": "text/event-stream", "cache-control": "no-cache" },
-  });
+  return new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } });
 }
 
 export async function routeIndex(ctx: Ctx, factory: BackendFactory, body: Record<string, unknown>) {
@@ -564,9 +223,17 @@ export async function backfillStatus(ctx: Ctx, factory: BackendFactory) {
  * Cron drainer — call from the `cron` hook. Processes one bounded batch of the
  * active backfill job, if any. No-ops when idle. Bounded work per tick keeps it
  * within the runtime's CPU/wall-time limits regardless of blog size.
+ *
+ * We drain on ANY cron tick, not only our own named task. The host fires the
+ * `cron` hook on the site's schedule (e.g. the `* * * * *` trigger in
+ * wrangler.jsonc); relying solely on a self-scheduled `ctx.cron.schedule()`
+ * task is fragile because `ctx.cron` is absent in some runtimes, which would
+ * leave a started backfill wedged forever. `processBatch()` is a cheap no-op
+ * when there is no active job, so an unconditional call is safe. When our own
+ * named task IS present we still honor it; any other tick just opportunistically
+ * advances a pending backfill.
  */
-export async function onCron(ctx: Ctx, factory: BackendFactory, cronName: string): Promise<void> {
-  if (cronName !== BACKFILL_CRON) return;
+export async function onCron(ctx: Ctx, factory: BackendFactory, _cronName: string): Promise<void> {
   try {
     const svc = await backfillFor(ctx, factory);
     await svc.processBatch();

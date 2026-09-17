@@ -1,25 +1,23 @@
 /**
  * SearchBackend — the top-level seam that decouples the hook/route layer from HOW
- * retrieval works. Selected by the `kbBackend` setting.
+ * retrieval works.
  *
- * Two implementations:
- *   - AiSearchBackend  (managed)  → Cloudflare AI Search does chunking, embedding,
- *                                   indexing, hybrid search, and generation. We
- *                                   only feed it page files (into R2) and query it.
- *   - VectorizeBackend (self-mgd) → our own chunk→embed→Vectorize pipeline +
- *                                   Workers-AI generation (the original engine).
+ * One implementation:
+ *   - AiSearchBackend (managed) → Cloudflare AI Search does chunking, embedding,
+ *     indexing, hybrid search, and generation. We push page files into the
+ *     instance's built-in storage (Items API, indexed per file immediately) and
+ *     query it. The interface stays an interface so the sandboxed (REST) and
+ *     native (binding) clients can be swapped underneath it.
  *
- * The two backends do genuinely different amounts of work, so the interface is
- * the *union of capabilities* the hooks/routes need; each backend implements it
- * in its own way. `indexAll` (backfill) is optional because AI Search indexes R2
- * on its own schedule.
+ * `indexCollection` (backfill) is optional because indexing is otherwise driven
+ * per-document by the content lifecycle hooks.
  */
 
 import type { SearchResponse, ChatResponse, SearchFilters, IndexStatusRecord } from "./types";
 
 export interface SearchBackend {
   /** Human label for the admin/status view. */
-  readonly kind: "ai-search" | "vectorize";
+  readonly kind: "ai-search";
 
   /** Semantic search → ranked results. */
   search(query: string, filters?: SearchFilters, limit?: number): Promise<SearchResponse>;
@@ -41,9 +39,8 @@ export interface SearchBackend {
   removeDocument(collectionId: string, contentId: string): Promise<void>;
 
   /**
-   * Backfill an entire collection. Optional: the managed backend has no
-   * per-chunk index to rebuild (it re-crawls R2), so it may no-op or just
-   * (re)write all files. Returns a status record for the admin table.
+   * Backfill an entire collection by (re)uploading every published document to
+   * the instance's built-in storage. Returns a status record for the admin table.
    */
   indexCollection?(collectionId: string, collectionName?: string): Promise<IndexStatusRecord>;
 

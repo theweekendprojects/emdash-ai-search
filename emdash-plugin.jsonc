@@ -7,28 +7,21 @@
   "license": "MIT",
   "author": { "name": "Ported from SonicJS ai-search (lane711/sonicjs, MIT)" },
   "security": { "email": "security@example.com" },
-  "description": "Semantic search + grounded AI chat over your content. TWO backends, chosen in Settings: 'Cloudflare AI Search' (managed — auto chunk/embed/index/search, minimal setup, the DEFAULT) and 'Vectorize' (self-managed pipeline — advanced control). THIS manifest configures the SANDBOXED build (Cloudflare REST APIs over ctx.http); the native build (src/native.ts) uses bindings and is configured in astro.config.mjs. NOTE: the injectable front-end chat widget (Portable Text 'AI Chat' block) is NATIVE-ONLY per EmDash docs.",
+  "description": "AI search + chat over your content, powered by Cloudflare AI Search. Indexes content into an AI Search instance (built-in storage, per file, on publish) and — in the native build — injects Cloudflare's public-endpoint UI snippets (chat bubble / search modal / chat page) site-wide. THIS manifest configures the SANDBOXED build (Cloudflare REST APIs over ctx.http); the native build (src/native.ts) uses the AI Search binding and is configured in astro.config.mjs.",
 
-  // Real capabilities (per EmDash SKILL.md), for the SANDBOXED build:
+  // Capabilities for the SANDBOXED build:
   //   - content:read     → ctx.content.list()/get() to pull items to index
-  //   - network:request  → ctx.http.fetch() to the Cloudflare REST APIs:
-  //                        AI Search (search/chat), Vectorize, Workers AI, and
-  //                        R2 (writing page files the AI Search backend indexes).
-  //                        Fenced to allowedHosts below.
-  // Sandboxed plugins get NO raw bindings — that's why the sandboxed build uses
-  // REST. (The native build reaches AI/Vectorize/AI_SEARCH/R2 bindings directly.)
+  //   - network:request  → ctx.http.fetch() to the Cloudflare AI Search REST API
+  //                        (search + Items API), fenced to allowedHosts below.
   "capabilities": ["content:read", "network:request"],
 
-  // ctx.http.fetch is fenced to these hosts. Cloudflare AI + Vectorize REST APIs
-  // live on api.cloudflare.com. Add your own vector endpoint host if you use one.
+  // ctx.http.fetch is fenced to these hosts (Cloudflare AI Search REST API).
   "allowedHosts": ["api.cloudflare.com"],
 
-  // Plugin-scoped storage (no capability needed). Replaces the D1 tables from v0.1.
-  //   - index_meta: one record per collection (indexing status)
-  //   - chunk_map:  content_id -> chunk ids, so deletes/re-index purge precisely
+  // Plugin-scoped storage (no capability needed):
+  //   - backfill_job: the durable, cron-drained backfill job (singleton)
+  //   - doc_state:    per-doc content-hash for skip-unchanged during backfill
   "storage": {
-    "index_meta": { "indexes": ["status", "lastSyncAt"] },
-    "chunk_map": { "indexes": ["collectionId", "updatedAt"] },
     "backfill_job": { "indexes": ["phase", "updatedAt"] },
     "doc_state": { "indexes": ["collectionId", "indexedAt"] }
   },

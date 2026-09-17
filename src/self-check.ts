@@ -1,65 +1,37 @@
 /**
- * Runnable self-check for the binding-free logic (ChunkingService).
+ * Runnable self-check for the binding-free pure logic (backfill decisions +
+ * content-hash extraction).
  *
  * No test framework — just asserts. Run with: npx tsx src/self-check.ts
- * These fail loudly if the chunking/extraction logic breaks, which is the one
- * piece of non-trivial pure logic in the plugin (everything else needs the live
- * EmDash ctx — content/storage/http — and is exercised via @emdash-cms/plugin-test).
+ * Everything else needs the live EmDash ctx (content/storage) or the Cloudflare
+ * AI Search binding and is exercised via @emdash-cms/plugin-test / live smoke tests.
  */
 import assert from "node:assert";
-import { ChunkingService } from "./services/chunking.service";
+import {
+  newJob,
+  decideDoc,
+  contentHash,
+  isLeaseFree,
+  isActive,
+  extractIndexableText,
+} from "./services/backfill-types";
 
-const c = new ChunkingService();
-
-// 1. Short content → a single chunk.
+// ── extractIndexableText: skips urls/short strings, keeps prose, walks nested ──
 {
-  const chunks = c.chunkContent("d1", "docs", "Title", { body: "a short body of text" });
-  assert.equal(chunks.length, 1, "short content should yield exactly one chunk");
-  assert.equal(chunks[0]!.id, "d1_chunk_0", "chunk id should be deterministic");
-  assert.ok(chunks[0]!.text.includes("short body"), "chunk should contain body text");
-}
-
-// 2. extractText skips urls and very short strings, keeps real prose.
-{
-  const chunks = c.chunkContent("d2", "docs", "T", {
+  const text = extractIndexableText({
     url: "https://example.com/ignored",
     tiny: "hi",
     body: "This is a genuine paragraph of content that should be indexed.",
   });
-  const text = chunks[0]!.text;
   assert.ok(!text.includes("example.com"), "urls must be skipped");
-  assert.ok(!text.includes("hi\n"), "sub-10-char strings must be skipped");
+  assert.ok(!/\bhi\b/.test(text), "sub-10-char strings must be skipped");
   assert.ok(text.includes("genuine paragraph"), "real prose must be kept");
-}
 
-// 3. Long content → multiple overlapping chunks with sequential ids.
-{
-  const longBody = Array.from({ length: 1300 }, (_, i) => `word${i}`).join(" ");
-  const chunks = c.chunkContent("d3", "docs", "T", { body: longBody });
-  assert.ok(chunks.length >= 3, `expected multiple chunks, got ${chunks.length}`);
-  chunks.forEach((ch, i) => assert.equal(ch.chunk_index, i, "chunk_index must be sequential"));
-  // overlap: last 50 words of chunk 0 should reappear at the start of chunk 1
-  const w0 = chunks[0]!.text.split(" ");
-  const w1 = chunks[1]!.text.split(" ");
-  assert.equal(w0[w0.length - 50], w1[0], "chunks must overlap by CHUNK_OVERLAP words");
-}
-
-// 4. Per-type chunk size is actually applied (regression: it was dead in SonicJS).
-{
-  const body = Array.from({ length: 500 }, (_, i) => `w${i}`).join(" ");
-  // comments cap at 200 words → 500 words must split; default 500 → single chunk.
-  const asComment = c.chunkContent("d4", "comments", "T", { body }, {}, "comments");
-  const asDefault = c.chunkContent("d5", "misc", "T", { body }, {}, "misc");
-  assert.ok(asComment.length > asDefault.length, "smaller per-type size must produce more chunks");
-}
-
-// 5. Empty content → no chunks (no crash).
-{
-  assert.equal(c.chunkContent("d6", "docs", "T", {}).length, 0, "empty content yields no chunks");
+  const nested = extractIndexableText({ blocks: [{ children: [{ text: "nested paragraph of content" }] }] });
+  assert.ok(nested.includes("nested paragraph of content"), "must walk nested/array content");
 }
 
 // ── Backfill decision logic (pure) ───────────────────────────────────────────
-import { newJob, decideDoc, contentHash, isLeaseFree, isActive } from "./services/backfill-types";
 
 // newJob: queue seeded, phase processing when there's work.
 {
@@ -82,8 +54,7 @@ import { newJob, decideDoc, contentHash, isLeaseFree, isActive } from "./service
   assert.equal(decideDoc(undefined, "xyz", true), "index");
   assert.equal(decideDoc("abc", "abc", false), "remove"); // unpublished wins even if hash matches
 }
-// contentHash: deterministic + sensitive to indexed content, incl. NESTED/ARRAY
-// (the v0.7.1 fix — must match the chunker's extraction surface).
+// contentHash: deterministic + sensitive to indexed content, incl. NESTED/ARRAY.
 {
   const a = contentHash("Title", { body: "hello there" });
   const b = contentHash("Title", { body: "hello there", id: "ignored", url: "http://skip" });
@@ -92,8 +63,6 @@ import { newJob, decideDoc, contentHash, isLeaseFree, isActive } from "./service
   assert.notEqual(a, c, "hash changes when body changes");
   assert.match(a, /^[0-9a-f]{8}$/, "hash is 8 hex chars");
 
-  // The bug that was: a change buried in a nested/array body (Portable-Text-like)
-  // must change the hash, or backfill would wrongly skip a genuinely-edited post.
   const nested1 = contentHash("T", { blocks: [{ children: [{ text: "first paragraph of content" }] }] });
   const nested2 = contentHash("T", { blocks: [{ children: [{ text: "EDITED paragraph of content" }] }] });
   assert.notEqual(nested1, nested2, "hash must detect edits in nested/array content");

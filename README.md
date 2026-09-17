@@ -127,10 +127,16 @@ Properties this buys you:
 ### Notes
 
 - Backfill drains the collections in **Indexed Collections**. Set those first.
-- **Cron availability:** the drainer relies on the `cron` hook. Native mode runs
-  it in the host; sandboxed relies on the runner's scheduled dispatch. If cron
-  isn't firing in your deployment, the per-collection **“Reindex now”** button
-  still works for small collections (synchronous, subject to time limits).
+- **Cron availability (known limitation):** the background drainer relies on the
+  `cron` hook, which the host only dispatches for a task registered via
+  `ctx.cron.schedule()`. In some native deployments `ctx.cron` is unavailable at
+  activation time, so no task is registered and a **Start backfill** job can stay
+  at "processing" without advancing. Bulk backfill is therefore best-effort right
+  now. This does **not** affect new content: publishing indexes immediately via
+  `content:afterPublish` (no cron involved). For existing archives, the
+  per-collection **“Reindex now”** button runs synchronously and works for small
+  collections regardless of cron. A cron-independent bulk reindex is a planned
+  follow-up.
 - Batch size (25) and cadence (1/min) are conservative defaults in
   `backfill-types.ts` — raise them for faster backfill on capable runtimes.
 

@@ -1,7 +1,7 @@
 {
   "name": "emdash-ai-search",
   "version": "0.4.0",
-  "description": "Semantic search + grounded AI chat for EmDash CMS. Native-first (trusted): reaches Workers AI / AI Search / Vectorize / R2 through Cloudflare bindings, tokenless — installed via plugins:[aiSearch()]. An optional sandboxed build (Cloudflare REST APIs over ctx.http, API-token config) is available at the ./sandbox entry. Ported from the SonicJS ai-search plugin (MIT).",
+  "description": "AI search + chat for EmDash CMS, powered by Cloudflare AI Search. Indexes your content into an AI Search instance (built-in storage, per-file, on publish) and injects Cloudflare's public-endpoint UI snippets (chat bubble / search modal / chat page) site-wide — no custom chat UI to maintain, minimal setup. Native-first (tokenless via the AI Search binding); an optional sandboxed REST build is at the ./sandbox entry.",
   "type": "module",
   "plugin": {
     "id": "ai-search"
@@ -21,13 +21,10 @@
       "import": "./dist/admin.js",
       "types": "./dist/admin.d.ts"
     },
-    "./astro": "./src/astro/index.ts",
-    "./components": "./src/astro/ChatWidget.astro",
     "./sandbox": "./dist/plugin.mjs"
   },
   "files": [
     "dist",
-    "src/astro",
     "README.md"
   ],
   "scripts": {
@@ -40,9 +37,6 @@
   },
   "engines": {
     "node": ">=18.0.0"
-  },
-  "dependencies": {
-    "deep-chat": "^1.3.0"
   },
   "devDependencies": {
     "@emdash-cms/plugin-cli": ">=0.1.0",
@@ -60,8 +54,8 @@
     "search",
     "semantic-search",
     "ai-chat",
-    "vectorize",
-    "workers-ai",
+    "cloudflare-ai-search",
+    "autorag",
     "cms",
     "cms-plugin",
     "knowledge-base"

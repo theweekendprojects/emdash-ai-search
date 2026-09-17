@@ -3,20 +3,43 @@
  *
  * Cloudflare AI Search owns chunking, embedding, indexing, hybrid search,
  * reranking, and generation. This backend's job is small:
- *   - indexDocument  → render the page to markdown, write it to the R2 bucket
- *                      the instance indexes (AI Search re-crawls on its schedule)
- *   - removeDocument → delete that R2 object
+ *   - indexDocument  → render the page to markdown and upload it to the
+ *                      instance's built-in storage (Items API), which indexes
+ *                      it per file, immediately — no R2, no crawl, no sync job.
+ *   - removeDocument → delete that item by key
  *   - search / chat  → query the AI Search instance and map to our shapes
  *
  * There is no per-chunk index for us to rebuild — that's the whole point of the
- * managed backend. `indexCollection` just (re)writes every published page's file.
+ * managed backend. `indexCollection` just (re)uploads every published page.
  */
 
 import type { SearchBackend } from "./search-backend";
 import type { Ctx } from "./host";
 import type { SearchFilters, SearchResponse, ChatResponse, IndexStatusRecord, ChatCitation } from "./types";
 import type { AiSearchClient, AiSearchChunk } from "./ai-search-client";
-import { type R2Writer, pageKey } from "./r2-writer";
+
+/** Stable item key for a content entry in AI Search built-in storage. */
+export function pageKey(collectionId: string, contentId: string): string {
+  return `${collectionId}/${contentId}.md`;
+}
+
+/**
+ * AI Search built-in storage caps a single item at 4 MB. Cap our markdown a
+ * little under that (leaving headroom for UTF-8 multibyte expansion) so an
+ * unusually large post can't make every publish throw. Truncation is on a byte
+ * budget, then trimmed back to a char boundary.
+ */
+export const MAX_ITEM_BYTES = 4 * 1024 * 1024; // 4 MB
+const SAFE_ITEM_BYTES = MAX_ITEM_BYTES - 4096; // headroom for the multibyte tail
+
+export function capMarkdown(md: string): { content: string; truncated: boolean } {
+  const bytes = new TextEncoder().encode(md);
+  if (bytes.length <= SAFE_ITEM_BYTES) return { content: md, truncated: false };
+  // Slice on the byte budget, then decode ignoring a possibly-split trailing char.
+  const slice = bytes.subarray(0, SAFE_ITEM_BYTES);
+  const content = new TextDecoder("utf-8", { fatal: false }).decode(slice).replace(/\uFFFD+$/, "");
+  return { content, truncated: true };
+}
 
 export class AiSearchBackend implements SearchBackend {
   readonly kind = "ai-search" as const;
@@ -24,8 +47,7 @@ export class AiSearchBackend implements SearchBackend {
   constructor(
     private ctx: Ctx,
     private client: AiSearchClient,
-    private r2: R2Writer,
-    private opts: { resultsLimit: number; chatModel: string },
+    private opts: { resultsLimit: number },
   ) {
     if (!ctx.content) throw new Error("AI Search: content:read capability missing (ctx.content)");
   }
@@ -80,13 +102,22 @@ export class AiSearchBackend implements SearchBackend {
       await this.removeDocument(collectionId, contentId);
       return;
     }
-    const md = renderMarkdown(titleOf(item), item.data);
-    await this.r2.putText(pageKey(collectionId, contentId), md);
-    // AI Search re-indexes the bucket on its own schedule — no explicit sync call.
+    const raw = renderMarkdown(titleOf(item), item.data);
+    const { content, truncated } = capMarkdown(raw);
+    if (truncated) {
+      this.ctx.log.warn("[ai-search] document exceeds 4MB item limit — truncated for indexing", {
+        collectionId,
+        contentId,
+      });
+    }
+    // Built-in storage: an uploaded file is queued and indexed per file (no R2,
+    // no 6h crawl/sync), so a publish becomes searchable on its own within
+    // moments — not on a shared multi-hour schedule.
+    await this.client.uploadItem(pageKey(collectionId, contentId), content);
   }
 
   async removeDocument(collectionId: string, contentId: string): Promise<void> {
-    await this.r2.remove(pageKey(collectionId, contentId));
+    await this.client.deleteItemByKey(pageKey(collectionId, contentId));
   }
 
   async indexCollection(collectionId: string, collectionName = collectionId): Promise<IndexStatusRecord> {
@@ -99,8 +130,8 @@ export class AiSearchBackend implements SearchBackend {
         // has no top-level title). Getting this wrong silently returns 0 items.
         const page = await this.ctx.content!.list(collectionId, { where: { status: "published" }, limit: 100, cursor });
         for (const item of page.items) {
-          const md = renderMarkdown(titleOf(item), item.data);
-          await this.r2.putText(pageKey(collectionId, item.id), md);
+          const { content } = capMarkdown(renderMarkdown(titleOf(item), item.data));
+          await this.client.uploadItem(pageKey(collectionId, item.id), content);
           count++;
         }
         cursor = page.hasMore ? page.cursor : undefined;
@@ -112,7 +143,7 @@ export class AiSearchBackend implements SearchBackend {
         indexedChunks: count, // managed: 1 file per doc; chunks are AI Search's business
         lastSyncAt: Date.now(),
         status: "completed",
-        errorMessage: "Files written to R2; AI Search indexes on its own schedule.",
+        errorMessage: "Uploaded to AI Search built-in storage; indexed per file on upload.",
       };
     } catch (err) {
       return {
@@ -143,7 +174,7 @@ function titleOf(item: { data?: Record<string, unknown> }): string {
   return typeof t === "string" && t.trim() ? t : "Untitled";
 }
 
-/** Render a content item to markdown for R2 (front-matter-ish title + body). */
+/** Render a content item to markdown for upload (front-matter-ish title + body). */
 function renderMarkdown(title: string, data: Record<string, unknown>): string {
   const parts: string[] = [`# ${title}`, ""];
   for (const key of ["description", "summary", "content", "body", "text"]) {

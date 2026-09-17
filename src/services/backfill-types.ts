@@ -10,7 +10,39 @@
  * decisions are unit-testable. The IO lives in backfill.service.ts.
  */
 
-import { extractIndexableText } from "./chunking.service";
+/**
+ * Extract the indexable text surface of a content item (title/body plus any
+ * nested/array string content, skipping ids/urls/short strings). `contentHash`
+ * hashes exactly this so a change to nested content (e.g. a Portable-Text body)
+ * changes the hash and is not wrongly skipped by the backfill dedup.
+ *
+ * (Relocated here from the old chunking.service when the plugin moved fully to
+ * Cloudflare AI Search; it is the only piece of that file still needed.)
+ */
+export function extractIndexableText(data: unknown): string {
+  const parts: string[] = [];
+  const record = (data ?? {}) as Record<string, unknown>;
+
+  for (const key of ["title", "name", "description", "content", "body", "text", "summary"]) {
+    if (record[key]) parts.push(String(record[key]));
+  }
+
+  const skipKeys = new Set(["id", "slug", "url", "image", "thumbnail", "metadata"]);
+  const walk = (obj: unknown): void => {
+    if (typeof obj === "string") {
+      if (obj.length > 10 && !obj.startsWith("http")) parts.push(obj);
+    } else if (Array.isArray(obj)) {
+      obj.forEach(walk);
+    } else if (obj && typeof obj === "object") {
+      for (const [k, v] of Object.entries(obj)) {
+        if (!skipKeys.has(k.toLowerCase())) walk(v);
+      }
+    }
+  };
+  walk(data);
+
+  return parts.join("\n\n").trim();
+}
 
 export type BackfillPhase = "idle" | "processing" | "done" | "error" | "cancelled";
 

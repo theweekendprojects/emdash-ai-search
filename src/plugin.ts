@@ -1,12 +1,17 @@
 /**
  * emdash-ai-search — SANDBOXED entry (src/plugin.ts).
  *
- * Registry-installable sandboxed plugin. Embeddings + vectors go over the
- * Cloudflare REST APIs via ctx.http (RestTransportFactory), so it needs a CF
- * account id + API token in Settings. See README "Mode A: Sandboxed + REST".
+ * Registry-installable sandboxed plugin. Indexing goes over the Cloudflare REST
+ * API via ctx.http (needs a CF account id + API token in Settings). See README
+ * "Mode A: Sandboxed + REST".
  *
- * All hook/route BODIES live in ./core (shared with the native entry). This
- * file only maps EmDash's SandboxedPlugin shape onto those bodies.
+ * The sandbox cannot register page:fragments or return a raw Response, so it
+ * omits the UI-snippet injection and the /ai-chat page. To get the site-facing
+ * search/chat UI in sandboxed mode, add Cloudflare's snippet <script> to your
+ * layout manually (see README). The native entry (src/native.ts) injects it for
+ * you.
+ *
+ * All hook/route BODIES live in ./core (shared with the native entry).
  */
 
 import type { SandboxedPlugin } from "emdash/plugin";
@@ -23,7 +28,6 @@ import {
   routeIndex,
   routeSync,
   routeStatus,
-  routeChat,
 } from "./core";
 import { handleAdmin } from "./admin";
 
@@ -82,34 +86,23 @@ const plugin: SandboxedPlugin = {
       public: true,
       handler: async (routeCtx, ctx) => routeSearch(asCtx(ctx), factory, (routeCtx.input as any) ?? {}),
     },
-    // Public chatbot: retrieve-then-generate over your content.
-    chat: {
-      public: true,
-      handler: async (routeCtx, ctx) => routeChat(asCtx(ctx), factory, (routeCtx.input as any) ?? {}),
-    },
-    // Streaming chat — sandboxed routes can't return a raw Response stream,
-    // so this route is omitted in sandboxed builds. The widget falls back to /chat.
-    // index: {
-    //   handler: async (routeCtx, ctx) => routeIndex(asCtx(ctx), factory, (routeCtx.input as any) ?? {}),
-    // },
     sync: {
       handler: async (_routeCtx, ctx) => routeSync(asCtx(ctx), factory),
     },
     status: {
       handler: async (_routeCtx, ctx) => routeStatus(asCtx(ctx), factory),
     },
-    // Block Kit admin panel: settings form + status table + backfill actions.
+    index: {
+      handler: async (routeCtx, ctx) => routeIndex(asCtx(ctx), factory, (routeCtx.input as any) ?? {}),
+    },
+    // Block Kit admin panel: settings form + backfill actions.
     admin: {
       handler: async (routeCtx, ctx) => handleAdmin(asCtx(ctx), factory, routeCtx.input),
     },
   },
   storage: {
-    index_meta: { indexes: ["status", "lastSyncAt"] },
-    chunk_map: { indexes: ["collectionId", "updatedAt"] },
     backfill_job: { indexes: ["phase", "updatedAt"] },
     doc_state: { indexes: ["collectionId", "indexedAt"] },
-    // Rate limiting storage (new in v0.8)
-    rate_limit: { indexes: ["ip", "minuteWindowStart", "dailyWindowStart"] },
   },
 };
 

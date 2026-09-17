@@ -1,22 +1,19 @@
 /**
- * Shared Block Kit admin page.
+ * Block Kit admin page (one private `admin` route drives the whole panel).
  *
- * One private `admin` route drives the whole panel. It handles the three
- * EmDash interaction types:
- *   - page_load    → render settings form + index-status table + stats + actions
+ * Handles the three EmDash interaction types:
+ *   - page_load    → render settings form + backfill controls
  *   - form_submit  → save settings to ctx.kv ("settings:*"), re-render
- *   - block_action → run an operation (sync all / backfill a collection), re-render
+ *   - block_action → run an operation (backfill / reindex), re-render
  *
  * Declarative only — no browser JS ships from the plugin. Works in both
- * sandboxed and native modes (native supports Block Kit too), so both entries
- * point their `admin` route at handleAdmin().
- *
- * Block/element shapes follow EmDash's block-kit reference.
+ * sandboxed and native modes.
  */
 
 import type { Ctx } from "./services/host";
 import type { BackendFactory } from "./core";
 import { loadSettings, routeIndex, startBackfill, cancelBackfill, backfillStatus } from "./core";
+import { normalizeEndpoint } from "./snippets";
 
 type Blocks = { blocks: unknown[]; toast?: { message: string; type: "success" | "error" | "info" } };
 
@@ -31,30 +28,22 @@ interface Interaction {
 /** Build the full page from current settings + status. */
 async function render(ctx: Ctx, factory: BackendFactory, toast?: Blocks["toast"]): Promise<Blocks> {
   const settings = await loadSettings(ctx);
-  const isVectorize = settings.kbBackend === "vectorize";
 
-  // Try to build the backend; on failure show the real reason. Status rows come
-  // from the backend (empty for the managed AI Search backend).
+  // Surface a backend build error (e.g. missing AI_SEARCH binding) if present.
   let backendError: string | null = null;
-  let statusRows: Array<Record<string, unknown>> = [];
   try {
-    const backend = factory.build(ctx, settings);
-    statusRows = (await backend.status()).map((r) => ({
-      collection: r.collectionName,
-      status: r.status + (r.errorMessage ? ` — ${r.errorMessage}` : ""),
-      items: r.totalItems,
-      chunks: r.indexedChunks,
-      lastSync: r.lastSyncAt ? new Date(r.lastSyncAt).toISOString() : "never",
-    }));
+    factory.build(ctx, settings);
   } catch (err) {
     backendError = err instanceof Error ? err.message : String(err);
   }
+
+  const endpointOk = !!normalizeEndpoint(settings.publicEndpointUrl);
 
   const blocks: unknown[] = [
     { type: "header", text: "AI Search" },
     {
       type: "context",
-      text: `Backend: ${isVectorize ? "Vectorize (self-managed, advanced)" : "Cloudflare AI Search (managed, recommended)"}`,
+      text: "Powered by Cloudflare AI Search. Content is indexed into your instance's built-in storage on publish (indexed per file, within seconds). Search and chat are served by Cloudflare's UI snippets.",
     },
   ];
 
@@ -62,60 +51,23 @@ async function render(ctx: Ctx, factory: BackendFactory, toast?: Blocks["toast"]
     blocks.push({
       type: "banner",
       variant: "error",
-      title: "AI search engine not ready",
-      description: `${backendError} — check the settings for the selected backend below.`,
+      title: "AI Search not ready",
+      description: `${backendError}`,
     });
   }
 
-  // ── Backend selector + shared settings ──────────────────────────────────────
+  // ── Indexing settings ───────────────────────────────────────────────────────
   const fields: unknown[] = [
     {
-      type: "select",
-      action_id: "kbBackend",
-      label: "Retrieval backend",
-      options: [
-        { label: "Cloudflare AI Search — managed, easiest (recommended)", value: "ai-search" },
-        { label: "Vectorize — self-managed, advanced (custom chunking/models)", value: "vectorize" },
-      ],
-      initial_value: settings.kbBackend,
-    },
-    {
       type: "text_input",
-      action_id: "cfAccountId",
-      label: "Cloudflare Account ID (sandboxed mode only)",
-      initial_value: settings.cfAccountId,
-    },
-    {
-      type: "secret_input",
-      action_id: "cfApiToken",
-      label: "Cloudflare API Token (sandboxed mode only)",
-    },
-    {
-      type: "text_input",
-      action_id: "chatModel",
-      label: "Chat / generation model",
-      initial_value: settings.chatModel,
-    },
-    {
-      type: "number_input",
-      action_id: "resultsLimit",
-      label: "Results Per Query",
-      min: 1,
-      max: 50,
-      initial_value: settings.resultsLimit,
-    },
-    {
-      type: "number_input",
-      action_id: "maxTokens",
-      label: "Chat max answer tokens",
-      min: 64,
-      max: 4096,
-      initial_value: settings.maxTokens,
+      action_id: "aiSearchInstance",
+      label: "AI Search instance name",
+      initial_value: settings.aiSearchInstance,
     },
     {
       type: "text_input",
       action_id: "selectedCollections",
-      label: 'Indexed Collections (JSON array, e.g. ["blog_posts","docs"])',
+      label: 'Indexed collections (JSON array, e.g. ["posts","pages"])',
       initial_value: JSON.stringify(settings.selectedCollections),
     },
     {
@@ -124,143 +76,83 @@ async function render(ctx: Ctx, factory: BackendFactory, toast?: Blocks["toast"]
       label: "Also index drafts (index on every save, not just publish)",
       initial_value: (await ctx.kv.get<boolean>("settings:indexDrafts")) === true,
     },
+    {
+      type: "number_input",
+      action_id: "resultsLimit",
+      label: "Results per query",
+      min: 1,
+      max: 50,
+      initial_value: settings.resultsLimit,
+    },
+    {
+      type: "text_input",
+      action_id: "cfAccountId",
+      label: "Cloudflare Account ID (sandboxed REST mode only)",
+      initial_value: settings.cfAccountId,
+    },
+    {
+      type: "secret_input",
+      action_id: "cfApiToken",
+      label: "Cloudflare API Token (sandboxed REST mode only)",
+    },
   ];
 
-  // AI Search fields — shown with a `condition` so the host hides them when the
-  // Vectorize backend is selected (client-side, no round-trip).
-  fields.push(
-    {
-      type: "text_input",
-      action_id: "aiSearchInstance",
-      label: "AI Search instance name",
-      initial_value: settings.aiSearchInstance,
-      condition: { field: "kbBackend", eq: "ai-search" },
-    },
-    {
-      type: "text_input",
-      action_id: "aiSearchBucket",
-      label: "R2 bucket the instance indexes (pages are written here)",
-      initial_value: settings.aiSearchBucket,
-      condition: { field: "kbBackend", eq: "ai-search" },
-    },
-  );
-
-  // Vectorize fields — conditional on the Vectorize backend.
-  fields.push(
-    {
-      type: "text_input",
-      action_id: "vectorizeIndex",
-      label: "Vectorize index name",
-      initial_value: settings.vectorizeIndex,
-      condition: { field: "kbBackend", eq: "vectorize" },
-    },
-    {
-      type: "text_input",
-      action_id: "embeddingModel",
-      label: "Embedding model",
-      initial_value: settings.embeddingModel,
-      condition: { field: "kbBackend", eq: "vectorize" },
-    },
-    {
-      type: "number_input",
-      action_id: "vectorTopK",
-      label: "Vector TopK",
-      min: 10,
-      max: 100,
-      initial_value: settings.vectorTopK,
-      condition: { field: "kbBackend", eq: "vectorize" },
-    },
-    {
-      type: "number_input",
-      action_id: "chatTopK",
-      label: "Chat context chunks",
-      min: 1,
-      max: 20,
-      initial_value: settings.chatTopK,
-      condition: { field: "kbBackend", eq: "vectorize" },
-    },
-  );
-
-  // ── Security settings ───────────────────────────────────────────────────────
+  // ── Site UI: Cloudflare snippets ────────────────────────────────────────────
   blocks.push({ type: "divider" });
-  blocks.push({ type: "header", text: "Security settings" });
+  blocks.push({ type: "header", text: "Site search & chat UI" });
   blocks.push({
     type: "context",
     text:
-      "Rate limiting and optional Turnstile verification for public chat endpoints. " +
-      "Note: endpoints are public by necessity; these settings cap abuse but don't make them private.",
+      "Enable the Public Endpoint on your AI Search instance in the Cloudflare dashboard " +
+      "(Settings → Public Endpoint), then paste its URL below. The plugin injects Cloudflare's " +
+      "chat bubble / search modal on every public page — no code changes. A full chat page is " +
+      "served at /_emdash/api/plugins/ai-search/ai-chat.",
   });
+  if (settings.publicEndpointUrl && !endpointOk) {
+    blocks.push({
+      type: "banner",
+      variant: "warning",
+      title: "Public endpoint URL not recognized",
+      description: "Expected something like https://<id>.search.ai.cloudflare.com/ or a custom domain.",
+    });
+  }
 
   fields.push(
-    {
-      type: "number_input",
-      action_id: "chatRateLimitPerMin",
-      label: "Chat rate limit: per minute",
-      min: 1,
-      max: 60,
-      initial_value: settings.chatRateLimitPerMin,
-    },
-    {
-      type: "number_input",
-      action_id: "chatRateLimitPerDay",
-      label: "Chat rate limit: per day",
-      min: 10,
-      max: 1000,
-      initial_value: settings.chatRateLimitPerDay,
-    },
-    {
-      type: "toggle",
-      action_id: "enableTurnstile",
-      label: "Require Cloudflare Turnstile verification",
-      initial_value: (await ctx.kv.get<boolean>("settings:enableTurnstile")) === true,
-    },
     {
       type: "text_input",
-      action_id: "turnstileSiteKey",
-      label: "Turnstile site key (required if enabled)",
-      initial_value: settings.turnstileSiteKey,
-      condition: { field: "enableTurnstile", eq: true },
+      action_id: "publicEndpointUrl",
+      label: "Public endpoint URL",
+      placeholder: "https://<id>.search.ai.cloudflare.com/",
+      initial_value: settings.publicEndpointUrl,
     },
-  );
-
-  // ── Chat widget (auto-injected site-wide) ───────────────────────────────────
-  blocks.push({ type: "divider" });
-  blocks.push({ type: "header", text: "Chat widget" });
-  blocks.push({
-    type: "context",
-    text:
-      "When on, a floating chat bubble is added to every public page automatically — " +
-      "no code changes needed. Turn it off if you prefer to place the “AI Chat” block " +
-      "on specific pages yourself (otherwise you'd get two bubbles).",
-  });
-
-  fields.push(
     {
       type: "toggle",
-      action_id: "autoInjectWidget",
+      action_id: "showChatBubble",
       label: "Show floating chat bubble on all pages",
-      initial_value: settings.autoInjectWidget,
+      initial_value: settings.showChatBubble,
+    },
+    {
+      type: "toggle",
+      action_id: "showSearchModal",
+      label: "Show Cmd/Ctrl+K search modal on all pages",
+      initial_value: settings.showSearchModal,
+    },
+    {
+      type: "select",
+      action_id: "snippetTheme",
+      label: "Snippet theme",
+      options: [
+        { label: "Auto (follow system)", value: "auto" },
+        { label: "Light", value: "light" },
+        { label: "Dark", value: "dark" },
+      ],
+      initial_value: settings.snippetTheme,
     },
     {
       type: "text_input",
-      action_id: "widgetTitle",
-      label: "Widget title",
-      initial_value: settings.widgetTitle,
-      condition: { field: "autoInjectWidget", eq: true },
-    },
-    {
-      type: "text_input",
-      action_id: "widgetWelcome",
-      label: "Welcome message",
-      initial_value: settings.widgetWelcome,
-      condition: { field: "autoInjectWidget", eq: true },
-    },
-    {
-      type: "text_input",
-      action_id: "widgetAccent",
-      label: "Accent color (hex)",
-      initial_value: settings.widgetAccent,
-      condition: { field: "autoInjectWidget", eq: true },
+      action_id: "snippetAccent",
+      label: "Accent color (hex, optional)",
+      initial_value: settings.snippetAccent,
     },
   );
 
@@ -272,9 +164,9 @@ async function render(ctx: Ctx, factory: BackendFactory, toast?: Blocks["toast"]
   blocks.push({
     type: "context",
     text:
-      "Installed on a blog with existing posts? Start a backfill — it indexes your " +
-      "archive in the background, one batch per minute (resumable, crash-safe, skips " +
-      "unchanged posts). New posts index automatically on publish.",
+      "Installed on a site with existing content? Start a backfill — it uploads your archive to " +
+      "AI Search in the background, one batch per minute (resumable, crash-safe, skips unchanged docs). " +
+      "New content indexes automatically on publish.",
   });
 
   let job: Awaited<ReturnType<typeof backfillStatus>> = null;
@@ -289,19 +181,13 @@ async function render(ctx: Ctx, factory: BackendFactory, toast?: Blocks["toast"]
       type: "fields",
       fields: [
         { label: "Backfill", value: `running — ${job.currentCollection ?? "…"}` },
-        { label: isVectorize ? "Indexed" : "Files queued to AI Search", value: String(job.processed) },
+        { label: "Uploaded", value: String(job.processed) },
         { label: "Skipped (unchanged)", value: String(job.skipped) },
         { label: "Removed", value: String(job.removed) },
         { label: "Errors", value: String(job.errors) },
         { label: "Queue remaining", value: String(job.queue.length) },
       ],
     });
-    if (!isVectorize) {
-      blocks.push({
-        type: "context",
-        text: "AI Search indexes the queued files asynchronously — actual indexing progress is in the Cloudflare dashboard.",
-      });
-    }
     blocks.push({
       type: "actions",
       elements: [{ type: "button", label: "Cancel backfill", action_id: "backfill_cancel", style: "danger" }],
@@ -312,7 +198,7 @@ async function render(ctx: Ctx, factory: BackendFactory, toast?: Blocks["toast"]
         type: "fields",
         fields: [
           { label: "Last backfill", value: job.phase },
-          { label: isVectorize ? "Indexed" : "Files queued", value: String(job.processed) },
+          { label: "Uploaded", value: String(job.processed) },
           { label: "Skipped", value: String(job.skipped) },
           { label: "Removed", value: String(job.removed) },
           { label: "Errors", value: String(job.errors) + (job.lastError ? ` — ${job.lastError}` : "") },
@@ -327,9 +213,9 @@ async function render(ctx: Ctx, factory: BackendFactory, toast?: Blocks["toast"]
     });
   }
 
-  // Immediate single-collection reindex (small, synchronous — for a quick refresh).
+  // Immediate single-collection reindex (small, synchronous — quick refresh).
   if (settings.selectedCollections.length > 0) {
-    blocks.push({ type: "context", text: "Or reindex one collection immediately (small collections only — large ones should use backfill):" });
+    blocks.push({ type: "context", text: "Or reindex one collection now (small collections only — large ones should use backfill):" });
     blocks.push({
       type: "actions",
       elements: settings.selectedCollections.map((c) => ({
@@ -340,30 +226,11 @@ async function render(ctx: Ctx, factory: BackendFactory, toast?: Blocks["toast"]
     });
   }
 
-  // ── Status table (Vectorize only; AI Search status lives in CF dashboard) ────
-  if (isVectorize) {
-    blocks.push({ type: "divider" });
-    blocks.push({ type: "header", text: "Index status" });
-    blocks.push({
-      type: "table",
-      page_action_id: "status_page",
-      empty_text: "No collections indexed yet. Add collection ids above, save, then Sync.",
-      columns: [
-        { key: "collection", label: "Collection" },
-        { key: "status", label: "Status" },
-        { key: "items", label: "Items" },
-        { key: "chunks", label: "Chunks" },
-        { key: "lastSync", label: "Last sync" },
-      ],
-      rows: statusRows,
-    });
-  } else {
-    blocks.push({ type: "divider" });
-    blocks.push({
-      type: "context",
-      text: "Managed backend — per-document indexing progress is shown in the Cloudflare AI Search dashboard, not here.",
-    });
-  }
+  blocks.push({ type: "divider" });
+  blocks.push({
+    type: "context",
+    text: "Per-document indexing status lives in the Cloudflare AI Search dashboard (Overview → Indexed Items).",
+  });
 
   return toast ? { blocks, toast } : { blocks };
 }
@@ -397,11 +264,9 @@ export async function handleAdmin(ctx: Ctx, factory: BackendFactory, rawInput: u
         await routeIndex(ctx, factory, { collectionId });
         return render(ctx, factory, { message: `Reindexed "${collectionId}"`, type: "success" });
       }
-      // status_page (table paging/sort) or unknown → just re-render.
       return render(ctx, factory);
     }
 
-    // page_load (and any fallthrough)
     return render(ctx, factory);
   } catch (err) {
     ctx.log.error("[ai-search] admin action failed", { err: String(err) });
@@ -417,39 +282,25 @@ async function saveSettings(ctx: Ctx, v: Record<string, unknown>): Promise<void>
   const setIf = async (key: string, value: unknown) => {
     if (value !== undefined && value !== null) await ctx.kv.set(`settings:${key}`, value);
   };
-  if (v.kbBackend === "vectorize" || v.kbBackend === "ai-search") {
-    await ctx.kv.set("settings:kbBackend", v.kbBackend);
-  }
+  await setIf("aiSearchInstance", v.aiSearchInstance);
   await setIf("cfAccountId", v.cfAccountId);
   // Only overwrite the token when the user typed a new one (secret fields come
   // back empty when left untouched — don't clobber a stored token with "").
   if (typeof v.cfApiToken === "string" && v.cfApiToken.length > 0) {
     await ctx.kv.set("settings:cfApiToken", v.cfApiToken);
   }
-  // AI Search
-  await setIf("aiSearchInstance", v.aiSearchInstance);
-  await setIf("aiSearchBucket", v.aiSearchBucket);
-  // Vectorize
-  await setIf("vectorizeIndex", v.vectorizeIndex);
-  await setIf("embeddingModel", v.embeddingModel);
-  await setIf("vectorTopK", Number(v.vectorTopK ?? 50));
-  await setIf("chatTopK", Number(v.chatTopK ?? 6));
-  // Shared
   await setIf("resultsLimit", Number(v.resultsLimit ?? 20));
   await ctx.kv.set("settings:selectedCollections", normalizeCollections(v.selectedCollections));
   await ctx.kv.set("settings:indexDrafts", v.indexDrafts === true);
-  await setIf("chatModel", v.chatModel);
-  await setIf("maxTokens", Number(v.maxTokens ?? 512));
-  // Security settings
-  await setIf("chatRateLimitPerMin", Number(v.chatRateLimitPerMin ?? 15));
-  await setIf("chatRateLimitPerDay", Number(v.chatRateLimitPerDay ?? 150));
-  await ctx.kv.set("settings:enableTurnstile", v.enableTurnstile === true);
-  await setIf("turnstileSiteKey", v.turnstileSiteKey);
-  // Auto-injected widget
-  if ("autoInjectWidget" in v) await ctx.kv.set("settings:autoInjectWidget", v.autoInjectWidget === true);
-  await setIf("widgetTitle", v.widgetTitle);
-  await setIf("widgetWelcome", v.widgetWelcome);
-  await setIf("widgetAccent", v.widgetAccent);
+
+  // Site UI snippets
+  await setIf("publicEndpointUrl", typeof v.publicEndpointUrl === "string" ? v.publicEndpointUrl.trim() : v.publicEndpointUrl);
+  await ctx.kv.set("settings:showChatBubble", v.showChatBubble === true);
+  await ctx.kv.set("settings:showSearchModal", v.showSearchModal === true);
+  if (v.snippetTheme === "auto" || v.snippetTheme === "light" || v.snippetTheme === "dark") {
+    await ctx.kv.set("settings:snippetTheme", v.snippetTheme);
+  }
+  await setIf("snippetAccent", v.snippetAccent);
 }
 
 function normalizeCollections(input: unknown): string {

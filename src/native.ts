@@ -1,17 +1,17 @@
 /**
  * emdash-ai-search — NATIVE entry (src/native.ts).
  *
- * Trusted (native) plugin. Runs in the host Worker isolate, so it can read the
- * Cloudflare bindings directly — NO API token, exactly like the Cloudflare
- * Email plugin reads its `send_email` binding. See README "Mode B: Native +
- * bindings".
+ * Trusted (native) plugin. Runs in the host Worker isolate, so it reads the
+ * Cloudflare AI Search binding directly — NO API token.
  *
- * Bindings are read from `cloudflare:workers`:
- *   env.AI         → Workers AI  (embeddings)
- *   env.VECTORIZE  → Vectorize   (vector store)
+ * Binding read from `cloudflare:workers`:
+ *   env.AI_SEARCH  → Cloudflare AI Search namespace (indexing via the Items API)
  *
- * Same hook/route BODIES as the sandboxed entry (imported from ./core); only
- * the transport factory differs (BindingTransportFactory).
+ * The plugin's job is small:
+ *   - index content into the AI Search instance's built-in storage on publish
+ *     (indexed immediately per file — no R2, no Vectorize, no crawl/sync job)
+ *   - inject Cloudflare's public-endpoint UI snippets (chat bubble / search
+ *     modal) site-wide via page:fragments, plus a /ai-chat page
  *
  * NOTE: native plugins are trusted/local only — installed via `plugins: []` in
  * astro.config.mjs, NOT registry-installable. Requires Astro 6 +
@@ -24,7 +24,6 @@ import { definePlugin } from "emdash";
 import { env } from "cloudflare:workers";
 import type { Ctx } from "./services/host";
 import { NativeBackendFactory, type NativeBindings } from "./backends";
-// NB: hook/route bodies below still come from ./core; only names/ids changed.
 import {
   onInstall,
   onActivate,
@@ -36,27 +35,15 @@ import {
   routeIndex,
   routeSync,
   routeStatus,
-  routeChat,
-  routeChatStream,
+  routeChatPage,
   buildPageFragments,
 } from "./core";
 import { handleAdmin } from "./admin";
 
-/**
- * Build the native backend factory from `cloudflare:workers` env. It reads
- * whatever bindings are present; the factory validates the ones the SELECTED
- * backend needs at build time (AI Search needs AI_SEARCH + R2; Vectorize needs
- * AI + VECTORIZE). So a site only has to configure the bindings for the backend
- * it actually uses.
- */
+/** Build the native backend factory from the `cloudflare:workers` AI Search binding. */
 function bindingFactory(): NativeBackendFactory {
   const e = env as unknown as NativeBindings;
-  return new NativeBackendFactory({
-    AI: e.AI,
-    VECTORIZE: e.VECTORIZE,
-    AI_SEARCH: e.AI_SEARCH,
-    R2: e.R2,
-  });
+  return new NativeBackendFactory({ AI_SEARCH: e.AI_SEARCH });
 }
 
 const asCtx = (ctx: unknown) => ctx as Ctx;
@@ -66,52 +53,26 @@ export function createPlugin() {
     id: "ai-search",
     version: "0.4.0",
 
-    // Capabilities/storage MUST be declared here (in definePlugin), like
-    // emdash-smtp does — this is what grants the runtime ctx.kv / ctx.content and
-    // provisions storage. Declaring them only on the build-time descriptor is NOT
-    // enough (that caused "Cannot read properties of undefined (reading 'kv')").
+    // Capabilities/storage MUST be declared here (in definePlugin) — this is what
+    // grants the runtime ctx.kv / ctx.content and provisions storage. Declaring
+    // them only on the build-time descriptor is NOT enough.
+    //   - content:read                 → ctx.content.list()/get() + lifecycle hooks
+    //   - network:request              → sandboxed REST path (harmless in native)
+    //   - hooks.page-fragments:register → inject the Cloudflare UI snippets
     capabilities: ["content:read", "network:request", "hooks.page-fragments:register"],
-    allowedHosts: ["api.cloudflare.com", "challenges.cloudflare.com"],
+    allowedHosts: ["api.cloudflare.com"],
     storage: {
-      index_meta: { indexes: ["status", "lastSyncAt"] },
-      chunk_map: { indexes: ["collectionId", "updatedAt"] },
+      // Backfill needs a durable job record + per-doc content-hash dedup. The old
+      // Vectorize collections (index_meta, chunk_map) and the chat rate_limit
+      // collection are gone.
       backfill_job: { indexes: ["phase", "updatedAt"] },
       doc_state: { indexes: ["collectionId", "indexedAt"] },
-      // Rate limiting storage (new in v0.8)
-      rate_limit: { indexes: ["ip", "minuteWindowStart", "dailyWindowStart"] },
     },
 
     admin: {
       entry: "emdash-ai-search/admin",
       pages: [{ path: "/", label: "AI Search", icon: "magnifying-glass" }],
       widgets: [{ id: "ai-search-status", title: "AI Search Index", size: "half" }],
-      // Front-end injectable chatbot: appears in the editor's "/" slash menu.
-      // Rendered on the site by src/astro/ChatWidget.astro (wired via the
-      // descriptor's componentsEntry in aiSearch()).
-      portableTextBlocks: [
-        {
-          type: "chat-widget",
-          label: "AI Chat",
-          icon: "link",
-          description: "Embed the AI chatbot on this page.",
-          fields: [
-            { type: "text_input", action_id: "title", label: "Panel title" },
-            { type: "text_input", action_id: "placeholder", label: "Input placeholder" },
-            { type: "text_input", action_id: "welcome", label: "Welcome message" },
-            { type: "text_input", action_id: "collections", label: 'Scope to collections (JSON array, optional)' },
-            { type: "text_input", action_id: "accent", label: "Accent color (hex)" },
-            {
-              type: "select",
-              action_id: "mode",
-              label: "Display mode",
-              options: [
-                { label: "Floating button", value: "floating" },
-                { label: "Inline panel", value: "inline" },
-              ],
-            },
-          ],
-        },
-      ],
     },
 
     hooks: {
@@ -158,9 +119,8 @@ export function createPlugin() {
         },
       },
 
-      // Site-wide floating chat bubble — injected into every public page with no
-      // source edits by the site author. Toggle off in Settings (autoInjectWidget)
-      // if you prefer the per-page "AI Chat" Portable Text block instead.
+      // Inject Cloudflare's AI Search UI snippets (chat bubble / search modal)
+      // into every public page — no source edits by the site author.
       "page:fragments": {
         handler: async (event: any, ctx: any) => {
           try {
@@ -174,24 +134,16 @@ export function createPlugin() {
     },
 
     // NB: native ROUTE handlers receive the plugin context as the FIRST argument
-    // (routeCtx), which carries both ctx.kv/ctx.content AND .input — same shape
-    // emdash-smtp uses (`handler: (routeCtx) => ... ctx: routeCtx`). (Contrast
-    // HOOK handlers above, which are (event, ctx).) Using a phantom 2nd arg as
-    // the context was undefined → "Cannot read properties of undefined (reading 'kv')".
+    // (routeCtx), which carries ctx.kv/ctx.content AND .input.
     routes: {
       search: {
         public: true,
         handler: async (routeCtx: any) => routeSearch(asCtx(routeCtx), bindingFactory(), routeCtx.input ?? {}),
       },
-      chat: {
+      // Full-page chat UI (Cloudflare's <chat-page-snippet>). Public HTML page.
+      "ai-chat": {
         public: true,
-        handler: async (routeCtx: any) => routeChat(asCtx(routeCtx), bindingFactory(), routeCtx.input ?? {}),
-      },
-      // Native-only: SSE streaming chat. Returns a raw Response, which only works
-      // in the host isolate (native), not through the sandbox route bridge.
-      "chat/stream": {
-        public: true,
-        handler: async (routeCtx: any) => routeChatStream(asCtx(routeCtx), bindingFactory(), routeCtx.input ?? {}),
+        handler: async (routeCtx: any) => routeChatPage(asCtx(routeCtx)),
       },
       index: {
         handler: async (routeCtx: any) => routeIndex(asCtx(routeCtx), bindingFactory(), routeCtx.input ?? {}),

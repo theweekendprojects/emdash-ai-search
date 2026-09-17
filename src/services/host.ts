@@ -78,16 +78,6 @@ export interface HttpAccess {
   fetch(input: string, init?: RequestInit): Promise<Response>;
 }
 
-/**
- * R2 bucket binding shape (native mode only). The AI Search backend writes
- * authored pages here so the managed instance can index them. Sandboxed mode
- * has no R2 binding and uses the R2 REST API over ctx.http instead.
- */
-export interface R2Bucket {
-  put(key: string, value: string | ArrayBuffer | ReadableStream): Promise<unknown>;
-  delete(key: string): Promise<void>;
-}
-
 export interface LogAccess {
   info(msg: string, data?: unknown): void;
   warn(msg: string, data?: unknown): void;
