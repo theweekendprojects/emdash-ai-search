@@ -149,23 +149,39 @@ export class RestAiSearchClient implements AiSearchClient {
     });
     if (!res.ok) return null;
     const json = (await res.json()) as any;
-    const items = (json.result ?? json.items ?? []) as Array<{ id: string; key: string }>;
-    return items.find((it) => it.key === key)?.id ?? null;
+    const items = (json.result ?? json.items ?? []) as Array<{ id?: string; public_id?: string; item_id?: string; key: string }>;
+    const m = items.find((it) => it.key === key);
+    return m?.id ?? m?.public_id ?? m?.item_id ?? null;
   }
 }
 
 // ── Binding (native) ──────────────────────────────────────────────────────────
 
-/** An item as returned by the Items API list/get. */
+/**
+ * An item as returned by the Items API list/get.
+ *
+ * NOTE: the identifier field name varies across the AI Search API surfaces —
+ * the dashboard/list can return it as `public_id` (and some responses use
+ * `item_id`) rather than `id`. `items.delete()` wants that identifier, so we
+ * read whichever is present (see `itemIdOf`). Getting this wrong means deletes
+ * silently no-op (delete(undefined)).
+ */
 export interface AiSearchItem {
-  id: string;
+  id?: string;
+  public_id?: string;
+  item_id?: string;
   key: string;
   status?: string;
 }
 
+/** Resolve the deletable item id across the field-name variants the API uses. */
+function itemIdOf(item: AiSearchItem | undefined): string | null {
+  return item?.id ?? item?.public_id ?? item?.item_id ?? null;
+}
+
 /** The Items API handle (instance.items.*), per the AI Search Workers binding. */
 export interface AiSearchItems {
-  upload(name: string, content: string | ArrayBuffer | ReadableStream, options?: { metadata?: Record<string, string> }): Promise<{ id: string; key: string }>;
+  upload(name: string, content: string | ArrayBuffer | ReadableStream, options?: { metadata?: Record<string, string> }): Promise<{ id?: string; public_id?: string; key: string }>;
   delete(itemId: string): Promise<void>;
   list(opts?: { page?: number; per_page?: number; search?: string }): Promise<{ result: AiSearchItem[]; result_info?: { total_count?: number; page?: number; per_page?: number } }>;
 }
@@ -232,11 +248,13 @@ export class BindingAiSearchClient implements AiSearchClient {
   }
 
   private async findItemId(key: string): Promise<string | null> {
-    // Prefer a targeted search, then fall back to paging.
+    // Prefer a targeted search, then fall back to paging. Use itemIdOf() so we
+    // tolerate the id being returned as id/public_id/item_id.
     try {
       const hit = await this.instance.items.list({ search: key, per_page: 50 });
       const match = (hit.result ?? []).find((it) => it.key === key);
-      if (match) return match.id;
+      const id = itemIdOf(match);
+      if (id) return id;
     } catch {
       /* fall through to paging */
     }
@@ -244,8 +262,8 @@ export class BindingAiSearchClient implements AiSearchClient {
     for (;;) {
       const res = await this.instance.items.list({ page, per_page: 50 });
       const items = res.result ?? [];
-      const match = items.find((it) => it.key === key);
-      if (match) return match.id;
+      const id = itemIdOf(items.find((it) => it.key === key));
+      if (id) return id;
       const total = res.result_info?.total_count ?? 0;
       if (items.length === 0 || page * 50 >= total) return null;
       page++;
