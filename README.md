@@ -105,6 +105,16 @@ binding **name must be `AI_SEARCH`** (that's what the plugin reads):
 
 The instance must exist (step 1) before you deploy.
 
+> **Namespace vs. instance — how the plugin finds your instance.** This wrangler
+> binding points at a *namespace* (a container that can hold many instances),
+> not a single instance. The plugin then picks the specific instance *by name*
+> at runtime: it calls `env.AI_SEARCH.get(<AI Search instance name>)`, where the
+> name comes from the **"AI Search instance name"** admin setting (step 7). So
+> two things must line up: the `namespace` here must contain the instance, and
+> the admin field must hold that instance's exact name. If you created the
+> instance in the default namespace (the usual case), leave `namespace` as
+> `"default"` and just set the instance name in admin.
+
 ### 6. Install and register the plugin
 
 ```sh
@@ -132,7 +142,11 @@ Deploy your site (`wrangler deploy`, or your usual build+deploy).
 
 Open **EmDash Admin → Plugins → AI Search** and set:
 
-- **AI Search instance name** — the name from step 1 (e.g. `my-search`).
+- **AI Search instance name** — the exact name of the instance from step 1 (e.g.
+  `my-search`), located *inside* the namespace your `AI_SEARCH` binding points
+  at. This is what selects which instance the plugin reads and writes; the
+  wrangler binding only chooses the namespace. It must match the dashboard
+  instance name character-for-character.
 - **Indexed collections** — a JSON array of the collections to index, e.g.
   `["posts","pages"]`. (Leave empty to index everything.)
 - **Public endpoint URL** — the URL from step 3.
@@ -224,7 +238,7 @@ All settings live on the plugin admin page (**Admin → Plugins → AI Search**)
 
 | Setting | What it does | Default |
 |---|---|---|
-| **AI Search instance name** | The instance the plugin targets | `emdash-ai-search` |
+| **AI Search instance name** | Selects which instance (by name, inside the bound `AI_SEARCH` namespace) the plugin reads/writes via `env.AI_SEARCH.get(name)` | `emdash-ai-search` |
 | **Indexed collections** | JSON array of collections to index; empty = all | `[]` |
 | **Also index drafts** | Index on every save, not just publish | off |
 | **Results per query** | Max results the plugin's own `/search` route requests | 20 |
