@@ -54,12 +54,25 @@
     "search",
     "semantic-search",
     "ai-chat",
+    "chatbot",
+    "rag",
+    "cloudflare",
     "cloudflare-ai-search",
     "autorag",
+    "cloudflare-workers",
+    "astro",
     "cms",
     "cms-plugin",
     "knowledge-base"
   ],
   "license": "MIT",
-  "author": "Ported from SonicJS ai-search (lane711/sonicjs, MIT)"
+  "author": "The Weekend Projects",
+  "homepage": "https://github.com/theweekendprojects/emdash-ai-search#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/theweekendprojects/emdash-ai-search.git"
+  },
+  "bugs": {
+    "url": "https://github.com/theweekendprojects/emdash-ai-search/issues"
+  }
 }
