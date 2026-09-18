@@ -7,11 +7,17 @@
 **Publish a post → it's searchable and answerable by an AI chatbot in seconds.**
 No vector database to run. No embeddings pipeline to babysit. No chat UI to build.
 
-[![npm](https://img.shields.io/npm/v/emdash-ai-search?color=%230066cc&label=npm)](https://www.npmjs.com/package/emdash-ai-search)
-[![license](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
-[![EmDash plugin](https://img.shields.io/badge/EmDash-plugin-black)](https://github.com/emdash-cms/emdash)
-[![powered by Cloudflare AI Search](https://img.shields.io/badge/Cloudflare-AI%20Search-F38020?logo=cloudflare&logoColor=white)](https://developers.cloudflare.com/ai-search/)
-[![tokenless](https://img.shields.io/badge/native-tokenless-brightgreen)](#-why-people-like-it)
+[![npm](https://img.shields.io/npm/v/emdash-ai-search?color=cb3837&logo=npm)](https://www.npmjs.com/package/emdash-ai-search)
+[![npm downloads](https://img.shields.io/npm/dm/emdash-ai-search?color=cb3837&logo=npm)](https://www.npmjs.com/package/emdash-ai-search)
+[![license](https://img.shields.io/npm/l/emdash-ai-search?color=blue)](./LICENSE)
+[![built for EmDash](https://img.shields.io/badge/built%20for-EmDash-000000)](https://github.com/emdash-cms/emdash)
+[![powered by Cloudflare AI Search](https://img.shields.io/badge/powered%20by-Cloudflare%20AI%20Search-F38020?logo=cloudflare&logoColor=white)](https://developers.cloudflare.com/ai-search/)
+
+**[Live demo](https://theweekendprojects.com)** · **[npm](https://www.npmjs.com/package/emdash-ai-search)** · **[Quickstart](#️-setup--step-by-step)**
+
+<br />
+
+<img src="./assets/chat-demo.png" alt="Grounded AI chat bubble answering a question from site content, with citations" width="640" />
 
 </div>
 
@@ -235,7 +241,11 @@ Nothing is injected until you set the **Public endpoint URL**.
 
 ## ⚙️ Settings reference
 
-All in **Admin → Plugins → AI Search**.
+All in **Admin → Plugins → AI Search** — one screen, no config files.
+
+<div align="center">
+  <img src="./assets/admin-settings.png" alt="The AI Search plugin admin settings screen in EmDash" width="640" />
+</div>
 
 | Setting | What it does | Default |
 |---|---|---|
