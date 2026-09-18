@@ -1,0 +1,45 @@
+<svg width="1280" height="640" viewBox="0 0 1280 640" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b1220"/>
+      <stop offset="1" stop-color="#131c31"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#F38020"/>
+      <stop offset="1" stop-color="#f6a04d"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1280" height="640" fill="url(#bg)"/>
+
+  <!-- accent bar -->
+  <rect x="0" y="0" width="14" height="640" fill="url(#accent)"/>
+
+  <!-- top eyebrow -->
+  <text x="90" y="150" font-family="Helvetica, Arial, sans-serif" font-size="30" font-weight="600" letter-spacing="3" fill="#8aa0c6">EMDASH CMS · PLUGIN</text>
+
+  <!-- title -->
+  <text x="86" y="270" font-family="Helvetica, Arial, sans-serif" font-size="104" font-weight="800" fill="#ffffff">emdash-ai-search</text>
+
+  <!-- tagline -->
+  <text x="90" y="350" font-family="Helvetica, Arial, sans-serif" font-size="44" font-weight="600" fill="#e7edf7">Drop-in AI search + chat for your CMS.</text>
+
+  <!-- sub -->
+  <text x="90" y="420" font-family="Helvetica, Arial, sans-serif" font-size="34" font-weight="400" fill="#9fb2d4">Publish a post → it&#39;s searchable and answerable in seconds.</text>
+  <text x="90" y="466" font-family="Helvetica, Arial, sans-serif" font-size="34" font-weight="400" fill="#9fb2d4">No vector DB. No embeddings pipeline. No chat UI to build.</text>
+
+  <!-- pills -->
+  <g font-family="Helvetica, Arial, sans-serif" font-size="26" font-weight="600">
+    <rect x="90" y="530" width="230" height="56" rx="28" fill="#1e2a44"/>
+    <text x="120" y="567" fill="#cfe0ff">⚡ Seconds, not hours</text>
+
+    <rect x="345" y="530" width="180" height="56" rx="28" fill="#1e2a44"/>
+    <text x="375" y="567" fill="#cfe0ff">🔒 Tokenless</text>
+
+    <rect x="550" y="530" width="290" height="56" rx="28" fill="#1e2a44"/>
+    <text x="580" y="567" fill="#cfe0ff">💬 Grounded + cited</text>
+  </g>
+
+  <!-- powered by -->
+  <text x="1190" y="600" text-anchor="end" font-family="Helvetica, Arial, sans-serif" font-size="26" font-weight="600" fill="#F38020">Powered by Cloudflare AI Search</text>
+</svg>
