@@ -77,6 +77,12 @@ async function render(ctx: Ctx, factory: BackendFactory, toast?: Blocks["toast"]
       initial_value: (await ctx.kv.get<boolean>("settings:indexDrafts")) === true,
     },
     {
+      type: "toggle",
+      action_id: "forceReindex",
+      label: "Force reindex (re-upload even unchanged posts)",
+      initial_value: (await ctx.kv.get<boolean>("settings:forceReindex")) === true,
+    },
+    {
       type: "number_input",
       action_id: "resultsLimit",
       label: "Results per query",
@@ -213,6 +219,19 @@ async function render(ctx: Ctx, factory: BackendFactory, toast?: Blocks["toast"]
     });
   }
 
+  // Force-reindex state (set via the "Force reindex" toggle in the settings form
+  // above; saved with "Save settings"). When ON, Start backfill and "Reindex now"
+  // re-upload EVERY published post, even unchanged ones. When OFF (default),
+  // unchanged posts are skipped to save uploads.
+  const forceReindex = (await ctx.kv.get<boolean>("settings:forceReindex")) === true;
+  blocks.push({
+    type: "context",
+    text:
+      forceReindex
+        ? "⚠️ Force reindex is ON (set in settings above): the next backfill / reindex re-uploads every published post, including unchanged ones. Use this to rebuild the index (e.g. after recreating the AI Search instance), then turn it off for normal, cost-saving runs."
+        : "Normally, indexing skips posts whose content hasn't changed since they were last indexed (saves uploads). Enable “Force reindex” in the settings above (and Save) to re-upload everything anyway — useful to repair the index if it drifted from what the plugin thinks is indexed.",
+  });
+
   // Immediate single-collection reindex (small, synchronous — quick refresh).
   if (settings.selectedCollections.length > 0) {
     blocks.push({ type: "context", text: "Or reindex one collection now (small collections only — large ones should use backfill):" });
@@ -220,7 +239,7 @@ async function render(ctx: Ctx, factory: BackendFactory, toast?: Blocks["toast"]
       type: "actions",
       elements: settings.selectedCollections.map((c) => ({
         type: "button",
-        label: `Reindex "${c}" now`,
+        label: forceReindex ? `Force reindex "${c}" now` : `Reindex "${c}" now`,
         action_id: `reindex:${c}`,
       })),
     });
@@ -248,10 +267,13 @@ export async function handleAdmin(ctx: Ctx, factory: BackendFactory, rawInput: u
 
     if (interaction.type === "block_action") {
       const actionId = interaction.action_id ?? "";
+      // The force-reindex flag is a form toggle saved via "Save settings"
+      // (settings:forceReindex). Read it here so reindex/backfill honor it.
+      const force = (await ctx.kv.get<boolean>("settings:forceReindex")) === true;
       if (actionId === "backfill_start") {
-        const r = await startBackfill(ctx, factory);
+        const r = await startBackfill(ctx, factory, { force });
         return render(ctx, factory, {
-          message: `Backfill started for ${r.collections.length} collection(s) — draining in the background.`,
+          message: `Backfill started for ${r.collections.length} collection(s)${force ? " (force: re-uploading all)" : ""} — draining in the background.`,
           type: "success",
         });
       }
@@ -261,8 +283,9 @@ export async function handleAdmin(ctx: Ctx, factory: BackendFactory, rawInput: u
       }
       if (actionId.startsWith("reindex:")) {
         const collectionId = actionId.slice("reindex:".length);
-        await routeIndex(ctx, factory, { collectionId });
-        return render(ctx, factory, { message: `Reindexed "${collectionId}"`, type: "success" });
+        const result = await routeIndex(ctx, factory, { collectionId, force });
+        const detail = result && typeof result === "object" && "errorMessage" in result ? ` — ${(result as any).errorMessage}` : "";
+        return render(ctx, factory, { message: `Reindexed "${collectionId}"${force ? " (forced)" : ""}${detail}`, type: "success" });
       }
       return render(ctx, factory);
     }
@@ -292,6 +315,7 @@ async function saveSettings(ctx: Ctx, v: Record<string, unknown>): Promise<void>
   await setIf("resultsLimit", Number(v.resultsLimit ?? 20));
   await ctx.kv.set("settings:selectedCollections", normalizeCollections(v.selectedCollections));
   await ctx.kv.set("settings:indexDrafts", v.indexDrafts === true);
+  await ctx.kv.set("settings:forceReindex", v.forceReindex === true);
 
   // Site UI snippets
   await setIf("publicEndpointUrl", typeof v.publicEndpointUrl === "string" ? v.publicEndpointUrl.trim() : v.publicEndpointUrl);

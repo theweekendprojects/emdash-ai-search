@@ -24,14 +24,11 @@ import type { Ctx, StorageCollection, ContentItem } from "./host";
 import type { SearchBackend } from "./search-backend";
 import {
   type BackfillJob,
-  type DocState,
   BATCH_SIZE,
   LEASE_MS,
   newJob,
   isLeaseFree,
   isActive,
-  contentHash,
-  decideDoc,
 } from "./backfill-types";
 
 const JOB_ID = "current";
@@ -42,7 +39,6 @@ class LeaseLostError extends Error {}
 
 export class BackfillService {
   private jobs: StorageCollection<BackfillJob>;
-  private docs: StorageCollection<DocState>;
 
   constructor(
     private ctx: Ctx,
@@ -50,20 +46,24 @@ export class BackfillService {
   ) {
     if (!ctx.content) throw new Error("Backfill: content:read capability missing (ctx.content)");
     this.jobs = ctx.storage.backfill_job as StorageCollection<BackfillJob>;
-    this.docs = ctx.storage.doc_state as StorageCollection<DocState>;
+    // doc_state bookkeeping now lives entirely in backend.indexDocument (single
+    // source of truth); the backfill engine only owns the durable job record.
   }
 
   /**
-   * Seed a fresh job. Refuses to clobber a job that's still processing unless
-   * `force` is set (prevents an accidental double-Start from resetting progress
-   * while a worker is mid-batch).
+   * Seed a fresh job.
+   *
+   * @param opts.force  Re-upload every doc even if unchanged (bypass hash dedup),
+   *                    persisted on the job so every cron-drained batch honors it.
+   * @param opts.clobber  Reset a job that's still processing (defaults false, so
+   *                    an accidental double-Start doesn't wipe in-flight progress).
    */
-  async start(collections: string[], force = false): Promise<BackfillJob> {
-    if (!force) {
+  async start(collections: string[], opts?: { force?: boolean; clobber?: boolean }): Promise<BackfillJob> {
+    if (!opts?.clobber) {
       const cur = await this.jobs.get(JOB_ID);
       if (cur && cur.phase === "processing") return cur; // already running — leave it
     }
-    const job = newJob(collections, Date.now());
+    const job = newJob(collections, Date.now(), opts?.force === true);
     await this.jobs.put(JOB_ID, job);
     return job;
   }
@@ -128,9 +128,10 @@ export class BackfillService {
       // docs, but a shifted doc might be visited a tick late. Acceptable ceiling;
       // a fully stable scan would need snapshot isolation the content API lacks.
       const startAt = state.job.pageOffset ?? 0;
+      const force = state.job.force === true;
       for (let i = startAt; i < page.items.length && handled < BATCH_SIZE; i++) {
         const item = page.items[i]!;
-        const delta = await this.indexOne(collectionId, item);
+        const delta = await this.indexOne(collectionId, item, force);
         handled++;
         // Persist progress + renew lease AFTER each doc (crash-consistent counters,
         // and the lease can't expire mid-batch). CAS-guarded: if we lost the lease
@@ -207,26 +208,27 @@ export class BackfillService {
     return { job: next, revision: res.revision };
   }
 
-  /** Index/skip/remove one document. Returns counter deltas (no shared mutation). */
+  /**
+   * Index/skip/remove one document. Returns counter deltas (no shared mutation).
+   *
+   * Delegates to `backend.indexDocument`, which is the SINGLE source of truth for
+   * the content-hash dedup + doc_state bookkeeping (shared with publish/save/
+   * reindex). By default backfill skips unchanged docs; when the job was started
+   * with force, it re-uploads every doc.
+   */
   private async indexOne(
     collectionId: string,
     item: ContentItem,
+    force = false,
   ): Promise<{ processed: number; skipped: number; removed: number; errors: number }> {
-    const docId = `${collectionId}:${item.id}`;
-    const title = String(item.data?.title ?? item.data?.name ?? "Untitled");
-    const isPublished = !item.status || item.status === "published";
-    const hash = contentHash(title, item.data ?? {});
-    const prior = await this.docs.get(docId);
-    const action = decideDoc(prior?.contentHash, hash, isPublished);
-
-    if (action === "skip") return { processed: 0, skipped: 1, removed: 0, errors: 0 };
-    if (action === "remove") {
-      await this.backend.removeDocument(collectionId, item.id);
-      await this.docs.delete(docId);
-      return { processed: 0, skipped: 0, removed: 1, errors: 0 };
+    const action = await this.backend.indexDocument(collectionId, item.id, { force });
+    switch (action) {
+      case "indexed":
+        return { processed: 1, skipped: 0, removed: 0, errors: 0 };
+      case "skipped":
+        return { processed: 0, skipped: 1, removed: 0, errors: 0 };
+      case "removed":
+        return { processed: 0, skipped: 0, removed: 1, errors: 0 };
     }
-    await this.backend.indexDocument(collectionId, item.id);
-    await this.docs.put(docId, { docId, collectionId, contentId: item.id, contentHash: hash, indexedAt: Date.now() });
-    return { processed: 1, skipped: 0, removed: 0, errors: 0 };
   }
 }

@@ -14,9 +14,10 @@
  */
 
 import type { SearchBackend } from "./search-backend";
-import type { Ctx } from "./host";
+import type { Ctx, StorageCollection } from "./host";
 import type { SearchFilters, SearchResponse, ChatResponse, IndexStatusRecord, ChatCitation } from "./types";
 import type { AiSearchClient, AiSearchChunk } from "./ai-search-client";
+import { contentHash, type DocState } from "./backfill-types";
 
 /** Stable item key for a content entry in AI Search built-in storage. */
 export function pageKey(collectionId: string, contentId: string): string {
@@ -96,12 +97,36 @@ export class AiSearchBackend implements SearchBackend {
     return this.client.chatStream(question, { maxNumResults: this.opts.resultsLimit });
   }
 
-  async indexDocument(collectionId: string, contentId: string): Promise<void> {
+  /** Per-document indexed-state store (content-hash dedup). Provisioned by the host. */
+  private docStates(): StorageCollection<DocState> {
+    return this.ctx.storage.doc_state as StorageCollection<DocState>;
+  }
+
+  private docKey(collectionId: string, contentId: string): string {
+    return `${collectionId}:${contentId}`;
+  }
+
+  async indexDocument(
+    collectionId: string,
+    contentId: string,
+    opts?: { force?: boolean },
+  ): Promise<"indexed" | "skipped" | "removed"> {
     const item = await this.ctx.content!.get(collectionId, contentId);
     if (!item || (item.status && item.status !== "published")) {
       await this.removeDocument(collectionId, contentId);
-      return;
+      return "removed";
     }
+
+    // Content-hash dedup: skip the upload when this exact content was already
+    // indexed, UNLESS force is set (the "Force reindex" action, used to repair
+    // drift between our doc_state and the actual Cloudflare index).
+    const hash = contentHash(titleOf(item), item.data ?? {});
+    const docId = this.docKey(collectionId, contentId);
+    if (!opts?.force) {
+      const prior = await this.docStates().get(docId);
+      if (prior?.contentHash === hash) return "skipped";
+    }
+
     const raw = renderMarkdown(titleOf(item), item.data);
     const { content, truncated } = capMarkdown(raw);
     if (truncated) {
@@ -114,14 +139,31 @@ export class AiSearchBackend implements SearchBackend {
     // no 6h crawl/sync), so a publish becomes searchable on its own within
     // moments — not on a shared multi-hour schedule.
     await this.client.uploadItem(pageKey(collectionId, contentId), content);
+    // Record what we indexed so future runs can skip it while unchanged.
+    await this.docStates().put(docId, {
+      docId,
+      collectionId,
+      contentId,
+      contentHash: hash,
+      indexedAt: Date.now(),
+    });
+    return "indexed";
   }
 
   async removeDocument(collectionId: string, contentId: string): Promise<void> {
     await this.client.deleteItemByKey(pageKey(collectionId, contentId));
+    // Drop the dedup record so a later re-publish re-uploads (its absence means
+    // "not indexed"), and so doc_state doesn't leak entries for deleted content.
+    await this.docStates().delete(this.docKey(collectionId, contentId));
   }
 
-  async indexCollection(collectionId: string, collectionName = collectionId): Promise<IndexStatusRecord> {
-    let count = 0;
+  async indexCollection(
+    collectionId: string,
+    collectionName = collectionId,
+    opts?: { force?: boolean },
+  ): Promise<IndexStatusRecord> {
+    let indexed = 0;
+    let skipped = 0;
     let cursor: string | undefined;
     try {
       do {
@@ -130,12 +172,15 @@ export class AiSearchBackend implements SearchBackend {
         // has no top-level title). Getting this wrong silently returns 0 items.
         const page = await this.ctx.content!.list(collectionId, { where: { status: "published" }, limit: 100, cursor });
         for (const item of page.items) {
-          const { content } = capMarkdown(renderMarkdown(titleOf(item), item.data));
-          await this.client.uploadItem(pageKey(collectionId, item.id), content);
-          count++;
+          // Reuse the single deduped path so dedup + doc_state stay identical
+          // across publish, sync, reindex, and backfill (one source of truth).
+          const action = await this.indexDocument(collectionId, item.id, opts);
+          if (action === "indexed") indexed++;
+          else if (action === "skipped") skipped++;
         }
         cursor = page.hasMore ? page.cursor : undefined;
       } while (cursor);
+      const count = indexed + skipped;
       return {
         collectionId,
         collectionName,
@@ -143,9 +188,10 @@ export class AiSearchBackend implements SearchBackend {
         indexedChunks: count, // managed: 1 file per doc; chunks are AI Search's business
         lastSyncAt: Date.now(),
         status: "completed",
-        errorMessage: "Uploaded to AI Search built-in storage; indexed per file on upload.",
+        errorMessage: `Uploaded ${indexed}, skipped ${skipped} unchanged. Indexed per file on upload.`,
       };
     } catch (err) {
+      const count = indexed + skipped;
       return {
         collectionId,
         collectionName,

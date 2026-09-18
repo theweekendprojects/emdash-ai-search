@@ -32,17 +32,32 @@ export interface SearchBackend {
    */
   chatStream?(question: string, filters?: SearchFilters): AsyncIterable<string>;
 
-  /** Index/refresh a single document (called from content:afterPublish / afterSave). */
-  indexDocument(collectionId: string, contentId: string): Promise<void>;
+  /**
+   * Index/refresh a single document (called from content:afterPublish / afterSave).
+   * Skips the upload when the content is unchanged since it was last indexed
+   * (content-hash dedup via doc_state). Pass `{ force: true }` to re-upload
+   * regardless — used by the "Force reindex" admin action to repair drift.
+   * Returns the action taken so callers can count indexed vs skipped.
+   */
+  indexDocument(
+    collectionId: string,
+    contentId: string,
+    opts?: { force?: boolean },
+  ): Promise<"indexed" | "skipped" | "removed">;
 
   /** Remove a document from the index (content:afterUnpublish / afterDelete). */
   removeDocument(collectionId: string, contentId: string): Promise<void>;
 
   /**
-   * Backfill an entire collection by (re)uploading every published document to
-   * the instance's built-in storage. Returns a status record for the admin table.
+   * Backfill an entire collection, uploading every published document to the
+   * instance's built-in storage — but skipping unchanged docs (hash dedup)
+   * unless `force` is set. Returns a status record for the admin table.
    */
-  indexCollection?(collectionId: string, collectionName?: string): Promise<IndexStatusRecord>;
+  indexCollection?(
+    collectionId: string,
+    collectionName?: string,
+    opts?: { force?: boolean },
+  ): Promise<IndexStatusRecord>;
 
   /** Status rows for the admin table (may be empty for the managed backend). */
   status(): Promise<IndexStatusRecord[]>;

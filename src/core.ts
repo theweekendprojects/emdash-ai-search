@@ -172,16 +172,17 @@ export async function routeIndex(ctx: Ctx, factory: BackendFactory, body: Record
   if (!collectionId) return { error: "collectionId required" };
   const backend = await backendFor(ctx, factory);
   if (!backend.indexCollection) return { error: "backend does not support manual indexing" };
-  return backend.indexCollection(collectionId, String(body.collectionName ?? collectionId));
+  const force = body.force === true;
+  return backend.indexCollection(collectionId, String(body.collectionName ?? collectionId), { force });
 }
 
-export async function routeSync(ctx: Ctx, factory: BackendFactory) {
+export async function routeSync(ctx: Ctx, factory: BackendFactory, opts?: { force?: boolean }) {
   const settings = await loadSettings(ctx);
   const backend = await backendFor(ctx, factory);
   if (!backend.indexCollection) return { ok: true, collections: [], note: "backend indexes automatically" };
   for (const id of settings.selectedCollections) {
     try {
-      await backend.indexCollection(id);
+      await backend.indexCollection(id, id, { force: opts?.force === true });
     } catch (err) {
       ctx.log.error("[ai-search] sync failed", { collection: id, err: String(err) });
     }
@@ -201,10 +202,10 @@ async function backfillFor(ctx: Ctx, factory: BackendFactory): Promise<BackfillS
 }
 
 /** Start a backfill over the selected collections (admin action). */
-export async function startBackfill(ctx: Ctx, factory: BackendFactory) {
+export async function startBackfill(ctx: Ctx, factory: BackendFactory, opts?: { force?: boolean }) {
   const settings = await loadSettings(ctx);
   const svc = await backfillFor(ctx, factory);
-  const job = await svc.start(settings.selectedCollections);
+  const job = await svc.start(settings.selectedCollections, { force: opts?.force === true });
   return { started: true, collections: settings.selectedCollections, job };
 }
 

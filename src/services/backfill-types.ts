@@ -68,6 +68,8 @@ export interface BackfillJob {
   startedAt: number;
   updatedAt: number;
   lastError?: string;
+  /** When true, re-upload every doc even if unchanged (bypass hash dedup). */
+  force?: boolean;
 }
 
 /** Per-document indexed-state, for hash-skip dedup on re-runs. */
@@ -82,7 +84,7 @@ export interface DocState {
 export const BATCH_SIZE = 25; // docs indexed per cron tick — bounded work
 export const LEASE_MS = 60_000; // a batch must finish within this or the lease expires
 
-export function newJob(collections: string[], now: number): BackfillJob {
+export function newJob(collections: string[], now: number, force = false): BackfillJob {
   return {
     id: "current",
     phase: collections.length > 0 ? "processing" : "done",
@@ -97,6 +99,7 @@ export function newJob(collections: string[], now: number): BackfillJob {
     leaseUntil: 0,
     startedAt: now,
     updatedAt: now,
+    force,
   };
 }
 
