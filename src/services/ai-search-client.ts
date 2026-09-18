@@ -144,14 +144,24 @@ export class RestAiSearchClient implements AiSearchClient {
   }
 
   private async findItemId(key: string): Promise<string | null> {
-    const res = await this.http.fetch(`${this.base()}/items?search=${encodeURIComponent(key)}&per_page=50`, {
-      headers: { Authorization: `Bearer ${this.apiToken}` },
-    });
-    if (!res.ok) return null;
-    const json = (await res.json()) as any;
-    const items = (json.result ?? json.items ?? []) as Array<{ id?: string; public_id?: string; item_id?: string; key: string }>;
-    const m = items.find((it) => it.key === key);
-    return m?.id ?? m?.public_id ?? m?.item_id ?? null;
+    // Page and match by key — do NOT use `search` (it's a content search and
+    // won't match a filename key). Mirrors the binding client's approach.
+    let page = 1;
+    const perPage = 50;
+    for (;;) {
+      const res = await this.http.fetch(`${this.base()}/items?page=${page}&per_page=${perPage}`, {
+        headers: { Authorization: `Bearer ${this.apiToken}` },
+      });
+      if (!res.ok) return null;
+      const json = (await res.json()) as any;
+      const items = (json.result ?? json.items ?? []) as Array<{ id?: string; public_id?: string; item_id?: string; key: string }>;
+      const m = items.find((it) => it.key === key);
+      const id = m?.id ?? m?.public_id ?? m?.item_id ?? null;
+      if (id) return id;
+      const total = json.result_info?.total_count ?? 0;
+      if (items.length === 0 || page * perPage >= total) return null;
+      page++;
+    }
   }
 }
 
@@ -241,31 +251,30 @@ export class BindingAiSearchClient implements AiSearchClient {
   }
 
   async deleteItemByKey(key: string): Promise<void> {
-    // The Items API deletes by item id, not key, so resolve the id first.
-    // `search` filters items by text; we match the exact key from the page.
     const id = await this.findItemId(key);
     if (id) await this.instance.items.delete(id);
   }
 
+  /**
+   * Resolve an item's id from its `key` by PAGING through the item list and
+   * matching on `key`.
+   *
+   * IMPORTANT: do NOT use the `search` parameter for this. `items.list({search})`
+   * does a CONTENT/text search, so a filename key like "posts/<id>.md" does not
+   * match and the call returns zero items — which silently broke deletes (the id
+   * was never found, so items.delete was never called and unpublished/deleted
+   * content stayed in the index). Paging with an exact key match is reliable.
+   */
   private async findItemId(key: string): Promise<string | null> {
-    // Prefer a targeted search, then fall back to paging. Use itemIdOf() so we
-    // tolerate the id being returned as id/public_id/item_id.
-    try {
-      const hit = await this.instance.items.list({ search: key, per_page: 50 });
-      const match = (hit.result ?? []).find((it) => it.key === key);
-      const id = itemIdOf(match);
-      if (id) return id;
-    } catch {
-      /* fall through to paging */
-    }
     let page = 1;
+    const perPage = 50;
     for (;;) {
-      const res = await this.instance.items.list({ page, per_page: 50 });
+      const res = await this.instance.items.list({ page, per_page: perPage });
       const items = res.result ?? [];
       const id = itemIdOf(items.find((it) => it.key === key));
       if (id) return id;
       const total = res.result_info?.total_count ?? 0;
-      if (items.length === 0 || page * 50 >= total) return null;
+      if (items.length === 0 || page * perPage >= total) return null;
       page++;
     }
   }
