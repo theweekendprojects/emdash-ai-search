@@ -320,7 +320,7 @@ Key files:
 
 - `src/index.ts` — native descriptor factory `aiSearch()` (build‑time).
 - `src/native.ts` — native runtime entry (reads the `AI_SEARCH` binding).
-- `src/plugin.ts` — sandboxed entry (experimental REST path).
+- `src/plugin.ts` — sandboxed REST entry (source only; not shipped on npm — the published package is native).
 - `src/core.ts` — shared hook + route bodies, settings loader.
 - `src/snippets.ts` — builds the Cloudflare UI snippet fragments.
 - `src/admin.ts` — Block Kit admin page (settings + backfill/reindex actions).

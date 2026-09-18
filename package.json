@@ -1,7 +1,7 @@
 {
   "name": "emdash-ai-search",
   "version": "0.4.0",
-  "description": "AI search + chat for EmDash CMS, powered by Cloudflare AI Search. Indexes your content into an AI Search instance (built-in storage, per-file, on publish) and injects Cloudflare's public-endpoint UI snippets (chat bubble / search modal / chat page) site-wide — no custom chat UI to maintain, minimal setup. Native-first (tokenless via the AI Search binding); an optional sandboxed REST build is at the ./sandbox entry.",
+  "description": "AI search + chat for EmDash CMS, powered by Cloudflare AI Search. Indexes your content into an AI Search instance (built-in storage, per-file, on publish) and injects Cloudflare's public-endpoint UI snippets (chat bubble / search modal) site-wide — no custom chat UI to maintain, minimal setup. Native (tokenless) via the AI Search Workers binding.",
   "type": "module",
   "plugin": {
     "id": "ai-search"
@@ -20,8 +20,7 @@
     "./admin": {
       "import": "./dist/admin.js",
       "types": "./dist/admin.d.ts"
-    },
-    "./sandbox": "./dist/plugin.mjs"
+    }
   },
   "files": [
     "dist",
@@ -33,7 +32,8 @@
     "validate": "emdash-plugin validate",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "self-check": "tsx src/self-check.ts"
+    "self-check": "tsx src/self-check.ts",
+    "prepublishOnly": "rm -rf dist && tsc && node -e \"for (const f of ['dist/index.js','dist/native.js','dist/admin.js']) { require('fs').accessSync(f); }\""
   },
   "engines": {
     "node": ">=18.0.0"
