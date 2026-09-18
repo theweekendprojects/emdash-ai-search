@@ -119,12 +119,16 @@ The chat/search widgets talk to the instance's public endpoint.
 
 ### 4. Allow your site's origin (CORS) — ⚠️ don't skip this
 
-> **The #1 setup mistake.** If your site's origin isn't allow‑listed, the browser blocks the widget and the bubble silently won't appear.
+> **The #1 setup mistake.** If the origin your site is served from isn't allow‑listed, the browser blocks the request — the bubble renders but chat/search fail with a **CORS error** in the console.
 
-In the same **Settings → Public Endpoint** panel, under **Authorized hosts**, add:
+In the same **Settings → Public Endpoint** panel, under **Authorized hosts**, add **every hostname your site is served from** — one per line:
 
-- your production origin, e.g. `https://example.com`
-- (for local dev) `http://localhost:4321`
+- your production domain, e.g. `example.com`
+- your `www` subdomain if you use one, e.g. `www.example.com`
+- any other origin that serves the site — e.g. a `*.workers.dev` preview URL
+- (for local dev) `localhost:4321`
+
+> ⚠️ **Each hostname is a separate origin.** `example.com`, `www.example.com`, and `your-app.workers.dev` are three different origins to the browser — a custom domain **does not** cover its `www.` or the underlying `workers.dev` URL. If you add a custom domain later (or deploy behind one), come back and add it here, or the chat bubble will break with a CORS error even though it renders fine.
 
 Save. This is a browser control (it stops *other* sites embedding your widget), not access control.
 
@@ -293,7 +297,7 @@ Being upfront so there are no surprises. None of these affect the everyday flow 
 | Symptom | Fix |
 |---|---|
 | Chat bubble doesn't appear | Set the **Public endpoint URL** in admin; confirm your origin is in **Authorized hosts** (CORS). |
-| Bubble appears but errors on send | Re‑check CORS; confirm **Enable Public Endpoint** is on and the URL is right. |
+| Bubble appears but chat/search fails (CORS error in console) | The exact origin serving the page isn't in **Authorized hosts**. Add it — **including a custom domain and its `www.`** separately (each hostname is its own origin). Also confirm **Enable Public Endpoint** is on and the URL is right. |
 | `AI_SEARCH namespace binding missing` | Add `ai_search_namespaces` (binding `AI_SEARCH`) to `wrangler.jsonc`, redeploy; the instance must exist first. |
 | `cloudflare:workers` import fails to build | Upgrade to Astro 6 + `@astrojs/cloudflare` v13+. |
 | New posts not searchable | Confirm the collection is in **Indexed collections**; give it a few seconds. |
