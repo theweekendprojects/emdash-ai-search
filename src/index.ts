@@ -21,7 +21,10 @@ export function aiSearch(options: AiSearchOptions = {}): PluginDescriptor<AiSear
     version: "0.4.0",
     format: "native",
     entrypoint: "emdash-ai-search/native",
-    adminEntry: "emdash-ai-search/admin",
+    // NO adminEntry: this is a Block Kit admin (declarative blocks via the
+    // `admin` route in native.ts). Declaring adminEntry flips EmDash to a React
+    // admin (adminMode:"react") and the sidebar nav link never renders. Match
+    // the Block Kit settings plugins (better-auth/smtp/seo) which omit it.
     // Capabilities MUST be declared on the descriptor (like emdash-smtp does) or
     // EmDash grants the plugin a context without ctx.kv / ctx.content.
     //   - content:read                 → ctx.content.list()/get() + lifecycle hooks
@@ -36,7 +39,7 @@ export function aiSearch(options: AiSearchOptions = {}): PluginDescriptor<AiSear
       backfill_job: { indexes: ["phase", "updatedAt"] },
       doc_state: { indexes: ["collectionId", "indexedAt"] },
     },
-    adminPages: [{ path: "/", label: "AI Search", icon: "magnifying-glass" }],
+    adminPages: [{ path: "/settings", label: "AI Search", icon: "magnifying-glass" }],
     adminWidgets: [{ id: "ai-search-status", title: "AI Search Index", size: "half" }],
     options,
   };

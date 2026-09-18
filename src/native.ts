@@ -69,9 +69,14 @@ export function createPlugin() {
       doc_state: { indexes: ["collectionId", "indexedAt"] },
     },
 
+    // Block Kit admin: declare ONLY pages/widgets (no `entry`). Declaring an
+    // admin `entry` makes EmDash treat this as a React admin (adminMode:"react"),
+    // which expects a bundled React component we don't ship — and the sidebar
+    // link never renders. Every Block Kit settings plugin (better-auth, smtp,
+    // seo, webhook) omits `entry` and is driven purely by the `admin` route
+    // handler below. Use a NAMED path ("/settings") to match them.
     admin: {
-      entry: "emdash-ai-search/admin",
-      pages: [{ path: "/", label: "AI Search", icon: "magnifying-glass" }],
+      pages: [{ path: "/settings", label: "AI Search", icon: "magnifying-glass" }],
       widgets: [{ id: "ai-search-status", title: "AI Search Index", size: "half" }],
     },
 
