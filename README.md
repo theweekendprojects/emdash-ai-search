@@ -11,9 +11,10 @@ No vector database to run. No embeddings pipeline to babysit. No chat UI to buil
 [![npm downloads](https://img.shields.io/npm/dm/emdash-ai-search?color=cb3837&logo=npm)](https://www.npmjs.com/package/emdash-ai-search)
 [![license](https://img.shields.io/npm/l/emdash-ai-search?color=blue)](./LICENSE)
 [![built for EmDash](https://img.shields.io/badge/built%20for-EmDash-000000)](https://github.com/emdash-cms/emdash)
-[![powered by Cloudflare AI Search](https://img.shields.io/badge/powered%20by-Cloudflare%20AI%20Search-F38020?logo=cloudflare&logoColor=white)](https://developers.cloudflare.com/ai-search/)
+[![powered by Cloudflare AI Search](https://img.shields.io/badge/powered%20by-Cloudflare%20AI%20Search-F38020?logo=cloudflare&logoColor=white)](https://developers.cloudflare.com/ai-search)
+[![EmDash Registry](https://img.shields.io/badge/registry-emdashcms.com-000000?logo=cloudflare&logoColor=white)](https://plugins.emdashcms.com/plugins/@shahriar-robbani.bsky.social/ai-search)
 
-**[Live demo](https://theweekendprojects.com)** · **[npm](https://www.npmjs.com/package/emdash-ai-search)** · **[Quickstart](#️-setup--step-by-step)**
+**[Live demo](https://theweekendprojects.com)** · **[npm](https://www.npmjs.com/package/emdash-ai-search)** · **[Registry](https://plugins.emdashcms.com/plugins/@shahriar-robbani.bsky.social/ai-search)** · **[Quickstart](#️-setup--step-by-step)**
 
 <br />
 
@@ -97,6 +98,30 @@ Then create an AI Search instance, flip on its public endpoint, paste the URL in
 
 ---
 
+## 📦 Installation options
+
+This plugin is published in two forms:
+
+| Type | Install from | Best for |
+|------|--------------|----------|
+| **Native (recommended)** | npm | Production sites on Cloudflare Workers |
+| **Sandboxed** | Atmosphere registry | Testing, or when native plugins aren't allowed |
+
+### Native (npm)
+```bash
+pnpm add emdash-ai-search
+```
+Follow the setup steps below. This is the **recommended** version — tokenless and faster.
+
+### Sandboxed (Atmosphere)
+Install via EmDash admin or CLI:
+```bash
+emdash install ai-search
+```
+Configure in admin with your **Cloudflare Account ID** and **API Token** (since the sandboxed build uses REST APIs instead of Workers bindings).
+
+---
+
 ## 🛠️ Setup — step by step
 
 The plugin does nothing until a Cloudflare AI Search instance exists and its public endpoint is on. Do these in order.
@@ -155,8 +180,9 @@ The instance must exist (step 1) before you deploy.
 
 > **Namespace vs. instance.** This binding points at a *namespace* (a container of many instances), not one instance. The plugin picks the specific instance **by name** at runtime — `env.AI_SEARCH.get(<AI Search instance name>)`, where the name is the admin setting from step 7. So the `namespace` here must contain your instance, and the admin field must hold that instance's exact name. Default namespace? Leave it as `"default"` and just set the instance name in admin.
 
-### 6. Install and register the plugin
+### 6. Install the plugin (native or sandboxed)
 
+**Native (recommended):**
 ```sh
 pnpm add emdash-ai-search
 ```
@@ -174,6 +200,13 @@ export default defineConfig({
   ],
 });
 ```
+
+**Sandboxed:**
+Install via EmDash admin or CLI:
+```bash
+emdash install ai-search
+```
+Configure in admin with your **Cloudflare Account ID** and **API Token** (since the sandboxed build uses REST APIs instead of Workers bindings).
 
 Deploy your site (`wrangler deploy`, or your usual build + deploy).
 
@@ -247,19 +280,20 @@ All in **Admin → Plugins → AI Search** — one screen, no config files.
   <img src="./assets/admin-settings.png" alt="The AI Search plugin admin settings screen in EmDash" width="640" />
 </div>
 
-| Setting | What it does | Default |
-|---|---|---|
-| **AI Search instance name** | Which instance (by name, inside the bound `AI_SEARCH` namespace) the plugin reads/writes | `emdash-ai-search` |
-| **Indexed collections** | JSON array of collections to index; empty = all | `[]` |
-| **Also index drafts** | Index on every save, not just publish | off |
-| **Force reindex** | Re‑upload even unchanged posts on the next reindex/backfill | off |
-| **Results per query** | Max results the plugin's `/search` route requests | 20 |
-| **Public endpoint URL** | The instance endpoint the widgets use | — |
-| **Show floating chat bubble** | Inject the bubble site‑wide | on |
-| **Show Cmd/Ctrl+K search modal** | Inject the search modal site‑wide | off |
-| **Snippet theme** | `auto` / `light` / `dark` | auto |
-| **Accent color (hex)** | Overrides the snippet's primary color | — |
-| **Cloudflare Account ID / API Token** | *Sandboxed REST mode only* — leave blank for native | — |
+| Setting | What it does | Default | For |
+|---|---|---|---|
+| **AI Search instance name** | Which instance (by name, inside the bound `AI_SEARCH` namespace) the plugin reads/writes | `emdash-ai-search` | Native |
+| **Indexed collections** | JSON array of collections to index; empty = all | `[]` | Both |
+| **Also index drafts** | Index on every save, not just publish | off | Both |
+| **Force reindex** | Re‑upload even unchanged posts on the next reindex/backfill | off | Both |
+| **Results per query** | Max results the plugin's `/search` route requests | 20 | Both |
+| **Public endpoint URL** | The instance endpoint the widgets use | — | Both |
+| **Show floating chat bubble** | Inject the bubble site‑wide | on | Both |
+| **Show Cmd/Ctrl+K search modal** | Inject the search modal site‑wide | off | Both |
+| **Snippet theme** | `auto` / `light` / `dark` | auto | Both |
+| **Accent color (hex)** | Overrides the snippet's primary color | — | Both |
+| **Cloudflare Account ID** | *Sandboxed REST mode only* — your account ID for REST API auth | — | Sandboxed |
+| **Cloudflare API Token** | *Sandboxed REST mode only* — API token with AI Search permissions | — | Sandboxed |
 
 **Set on the Cloudflare instance instead (not here):** the generation model, chunk size, and hybrid‑search options.
 

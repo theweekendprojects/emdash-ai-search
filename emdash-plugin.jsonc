@@ -2,12 +2,12 @@
   "$schema": "./node_modules/@emdash-cms/plugin-cli/schemas/emdash-plugin.schema.json",
 
   "slug": "ai-search",
-  "publisher": "did:plc:REPLACE_WITH_YOUR_ATMOSPHERE_DID",
+  "publisher": "did:plc:n4mihg5idgr5ne4jigcmbh4k",
 
   "license": "MIT",
-  "author": { "name": "Ported from SonicJS ai-search (lane711/sonicjs, MIT)" },
-  "security": { "email": "security@example.com" },
-  "description": "AI search + chat over your content, powered by Cloudflare AI Search. Indexes content into an AI Search instance (built-in storage, per file, on publish) and — in the native build — injects Cloudflare's public-endpoint UI snippets (chat bubble / search modal / chat page) site-wide. THIS manifest configures the SANDBOXED build (Cloudflare REST APIs over ctx.http); the native build (src/native.ts) uses the AI Search binding and is configured in astro.config.mjs.",
+  "author": { "name": "The Weekend Projects", "url": "https://github.com/theweekendprojects" },
+  "security": { "email": "shahriar.robbani@gmail.com" },
+  "description": "AI search + chat powered by Cloudflare AI Search. Indexes content with built-in storage, injects UI snippets. Sandbox build uses REST APIs.",
 
   // Capabilities for the SANDBOXED build:
   //   - content:read     → ctx.content.list()/get() to pull items to index
