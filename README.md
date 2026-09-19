@@ -107,18 +107,28 @@ This plugin is published in two forms:
 | **Native (recommended)** | npm | Production sites on Cloudflare Workers |
 | **Sandboxed** | Atmosphere registry | Testing, or when native plugins aren't allowed |
 
-### Native (npm)
+### Native (recommended) ← Use this
+
 ```bash
 pnpm add emdash-ai-search
 ```
-Follow the setup steps below. This is the **recommended** version — tokenless and faster.
 
-### Sandboxed (Atmosphere)
+This is the **production-ready version** that we've tested. It runs on Cloudflare Workers via the `AI_SEARCH` binding (tokenless, faster).
+
+Follow the setup steps below.
+
+### Sandboxed (registry)
+
 Install via EmDash admin or CLI:
 ```bash
 emdash install ai-search
 ```
-Configure in admin with your **Cloudflare Account ID** and **API Token** (since the sandboxed build uses REST APIs instead of Workers bindings).
+
+This is the **sandboxed version** which:
+- Uses Cloudflare REST APIs instead of Workers bindings
+- Requires your **Cloudflare Account ID** and **API Token** in admin settings
+- Is less performant than the native version
+- Should only be used if native plugins aren't allowed in your environment
 
 ---
 
