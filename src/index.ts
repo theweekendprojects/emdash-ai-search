@@ -18,7 +18,7 @@ export interface AiSearchOptions extends Record<string, unknown> {
 export function aiSearch(options: AiSearchOptions = {}): PluginDescriptor<AiSearchOptions> {
   return {
     id: options.id ?? "ai-search",
-    version: "0.4.0",
+    version: "0.5.0",
     format: "native",
     entrypoint: "emdash-ai-search/native",
     // NO adminEntry: this is a Block Kit admin (declarative blocks via the

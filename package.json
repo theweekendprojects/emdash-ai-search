@@ -1,6 +1,6 @@
 {
   "name": "emdash-ai-search",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "AI search + chat for EmDash CMS, powered by Cloudflare AI Search. Indexes your content into an AI Search instance (built-in storage, per-file, on publish) and injects Cloudflare's public-endpoint UI snippets (chat bubble / search modal) site-wide — no custom chat UI to maintain, minimal setup. Native (tokenless) via the AI Search Workers binding.",
   "type": "module",
   "plugin": {

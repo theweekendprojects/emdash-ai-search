@@ -51,7 +51,7 @@ const asCtx = (ctx: unknown) => ctx as Ctx;
 export function createPlugin() {
   return definePlugin({
     id: "ai-search",
-    version: "0.4.0",
+    version: "0.5.0",
 
     // Capabilities/storage MUST be declared here (in definePlugin) — this is what
     // grants the runtime ctx.kv / ctx.content and provisions storage. Declaring
