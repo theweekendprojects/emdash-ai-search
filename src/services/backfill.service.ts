@@ -33,10 +33,6 @@ import {
 
 const JOB_ID = "current";
 
-/** Thrown internally to unwind the batch when the lease/CAS is lost or the job
- *  was cancelled by another actor — the batch must stop touching the job. */
-class LeaseLostError extends Error {}
-
 export class BackfillService {
   private jobs: StorageCollection<BackfillJob>;
 
@@ -68,16 +64,20 @@ export class BackfillService {
     return job;
   }
 
-  /** Cancel via compare-and-set so an in-flight batch can't overwrite it. */
+  /**
+   * Cancel the active job.
+   *
+   * Plain get/put — the EmDash storage runtime does NOT implement the
+   * compare-and-set / getVersioned surface the stub advertises (calling it
+   * throws `getVersioned is not a function`), which is what wedged cancel and
+   * the whole drain. A single cron worker drains sequentially, so a plain write
+   * is safe enough; a batch in flight re-checks the phase and stops when it sees
+   * "cancelled" (see processBatch).
+   */
   async cancel(): Promise<void> {
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const v = await this.jobs.getVersioned(JOB_ID);
-      if (!v || v.value.phase !== "processing") return;
-      const cancelled: BackfillJob = { ...v.value, phase: "cancelled", leaseUntil: 0, updatedAt: Date.now() };
-      const res = await this.jobs.compareAndSet(JOB_ID, v.revision, cancelled);
-      if (res.applied) return;
-      // else: raced with a batch write — retry
-    }
+    const job = await this.jobs.get(JOB_ID);
+    if (!job || job.phase !== "processing") return;
+    await this.jobs.put(JOB_ID, { ...job, phase: "cancelled", leaseUntil: 0, updatedAt: Date.now() });
   }
 
   async status(): Promise<BackfillJob | null> {
@@ -91,121 +91,108 @@ export class BackfillService {
   async processBatch(): Promise<{ done: boolean; processedThisBatch: number }> {
     const now = Date.now();
 
-    // 1) Claim the lease with compare-and-set (crash-safe; single worker).
-    const versioned = await this.jobs.getVersioned(JOB_ID);
-    if (!versioned) return { done: true, processedThisBatch: 0 };
-    const job = versioned.value;
+    // 1) Read + claim via plain get/put. The runtime lacks compare-and-set, so
+    //    the "lease" is a soft timestamp guard: if a live lease is held we back
+    //    off. A single cron worker drains sequentially, so this is sufficient;
+    //    indexing is idempotent, so a rare overlap can't corrupt anything.
+    const job = await this.jobs.get(JOB_ID);
+    if (!job) return { done: true, processedThisBatch: 0 };
     if (!isActive(job)) return { done: true, processedThisBatch: 0 };
-    if (!isLeaseFree(job, now)) return { done: false, processedThisBatch: 0 }; // another worker holds it
+    if (!isLeaseFree(job, now)) return { done: false, processedThisBatch: 0 }; // another tick is mid-batch
 
-    const leased: BackfillJob = { ...job, leaseUntil: now + LEASE_MS, updatedAt: now };
-    const claim = await this.jobs.compareAndSet(JOB_ID, versioned.revision, leased);
-    if (!claim.applied) return { done: false, processedThisBatch: 0 }; // lost the race
-
-    // Mutable state carried across the CAS-guarded writes in this batch.
-    let state: { job: BackfillJob; revision: string } = { job: leased, revision: claim.revision };
+    // Claim the soft lease.
+    let state: BackfillJob = { ...job, leaseUntil: now + LEASE_MS, updatedAt: now };
+    await this.jobs.put(JOB_ID, state);
     let handled = 0;
 
+    // Re-read helper: detect a concurrent cancel and stop touching the job.
+    const cancelled = async (): Promise<boolean> => {
+      const cur = await this.jobs.get(JOB_ID);
+      return !cur || cur.phase !== "processing";
+    };
+
     try {
-      const collectionId = state.job.queue[0];
+      const collectionId = state.queue[0];
       if (!collectionId) {
-        await this.commit(state, (j) => ({ ...j, phase: "done", currentCollection: null }));
+        state = { ...state, phase: "done", currentCollection: null, leaseUntil: 0, updatedAt: Date.now() };
+        await this.jobs.put(JOB_ID, state);
         return { done: true, processedThisBatch: 0 };
       }
 
       // list(collection, options); NO where.status filter here on purpose: we
-      // need to SEE unpublished/removed docs to purge them. decideDoc()
-      // classifies each item; only published ones are indexed.
+      // need to SEE unpublished/removed docs to purge them. Only published ones
+      // are indexed; the rest are removed.
       const page = await this.ctx.content!.list(collectionId, {
         limit: BATCH_SIZE,
-        cursor: state.job.cursor ?? undefined,
+        cursor: state.cursor ?? undefined,
       });
 
       // Resume within a page after a crash: skip docs already handled last time.
-      // ponytail: pageOffset assumes the page is stable across ticks. If content
-      // is added/removed mid-backfill the offset could land on a shifted item —
-      // harmless because indexing is idempotent and hash-dedup skips unchanged
-      // docs, but a shifted doc might be visited a tick late. Acceptable ceiling;
-      // a fully stable scan would need snapshot isolation the content API lacks.
-      const startAt = state.job.pageOffset ?? 0;
-      const force = state.job.force === true;
+      const startAt = state.pageOffset ?? 0;
+      const force = state.force === true;
       for (let i = startAt; i < page.items.length && handled < BATCH_SIZE; i++) {
+        // Honor a cancel that landed mid-batch: stop before indexing the next doc.
+        if (await cancelled()) {
+          this.ctx.log.info("[backfill] cancelled mid-batch, stopping");
+          return { done: true, processedThisBatch: handled };
+        }
         const item = page.items[i]!;
         const delta = await this.indexOne(collectionId, item, force);
         handled++;
-        // Persist progress + renew lease AFTER each doc (crash-consistent counters,
-        // and the lease can't expire mid-batch). CAS-guarded: if we lost the lease
-        // or the job was cancelled, this throws and we stop.
-        state = await this.commit(state, (j) => ({
-          ...j,
-          processed: j.processed + delta.processed,
-          skipped: j.skipped + delta.skipped,
-          removed: j.removed + delta.removed,
-          errors: j.errors + delta.errors,
-          pageOffset: i + 1, // next resume point within this page
-          leaseUntil: Date.now() + LEASE_MS, // renew
-        }));
+        // Persist progress + renew the soft lease after each doc.
+        state = {
+          ...state,
+          processed: state.processed + delta.processed,
+          skipped: state.skipped + delta.skipped,
+          removed: state.removed + delta.removed,
+          errors: state.errors + delta.errors,
+          pageOffset: i + 1,
+          leaseUntil: Date.now() + LEASE_MS,
+          updatedAt: Date.now(),
+        };
+        await this.jobs.put(JOB_ID, state);
       }
 
-      // Batch finished this page slice. Advance: next page cursor, or next collection.
+      // A cancel may have landed after the last doc — don't advance over it.
+      if (await cancelled()) return { done: true, processedThisBatch: handled };
+
+      // Advance: next page cursor, more of this page, or next collection.
       const consumedWholePage = startAt + handled >= page.items.length;
-      await this.commit(state, (j) => {
-        if (page.hasMore && page.cursor && consumedWholePage) {
-          return { ...j, cursor: page.cursor, pageOffset: 0 }; // next page
-        }
-        if (!consumedWholePage) {
-          return { ...j, pageOffset: startAt + handled }; // more of this page next tick
-        }
-        // Whole collection consumed → pop to next collection (or done).
-        const rest = j.queue.slice(1);
-        return {
-          ...j,
+      if (page.hasMore && page.cursor && consumedWholePage) {
+        state = { ...state, cursor: page.cursor, pageOffset: 0, leaseUntil: 0, updatedAt: Date.now() };
+      } else if (!consumedWholePage) {
+        state = { ...state, pageOffset: startAt + handled, leaseUntil: 0, updatedAt: Date.now() };
+      } else {
+        const rest = state.queue.slice(1);
+        state = {
+          ...state,
           queue: rest,
           currentCollection: rest[0] ?? null,
           cursor: null,
           pageOffset: 0,
           phase: rest.length === 0 ? "done" : "processing",
+          leaseUntil: 0,
+          updatedAt: Date.now(),
         };
-      });
-    } catch (err) {
-      if (err instanceof LeaseLostError) {
-        // Another actor (cancel, or a re-claim after our lease expired) owns the
-        // job now. Stop cleanly; do NOT write over their state.
-        return { done: false, processedThisBatch: handled };
       }
-      // Real error: record it and release the lease (best-effort, CAS-guarded).
+      await this.jobs.put(JOB_ID, state);
+    } catch (err) {
+      // Record the error and release the lease (best-effort).
       try {
-        await this.commit(state, (j) => ({
-          ...j,
-          errors: j.errors + 1,
+        const cur = (await this.jobs.get(JOB_ID)) ?? state;
+        await this.jobs.put(JOB_ID, {
+          ...cur,
+          errors: cur.errors + 1,
           lastError: err instanceof Error ? err.message : String(err),
           leaseUntil: 0,
-        }));
-      } catch { /* lease already lost — leave it */ }
+          updatedAt: Date.now(),
+        });
+      } catch { /* leave it */ }
       this.ctx.log.error("[backfill] batch failed", { err: String(err) });
       return { done: false, processedThisBatch: handled };
     }
 
-    // Release the lease.
-    try {
-      await this.commit(state, (j) => ({ ...j, leaseUntil: 0 }));
-    } catch { /* lost — fine */ }
-    return { done: state.job.phase !== "processing", processedThisBatch: handled };
-  }
-
-  /**
-   * Compare-and-set the job through a pure transform. Re-reads to detect that we
-   * still own the lease / the job is still ours; throws LeaseLostError if not,
-   * so a cancellation or a re-claim can't be silently overwritten.
-   */
-  private async commit(
-    state: { job: BackfillJob; revision: string },
-    transform: (j: BackfillJob) => BackfillJob,
-  ): Promise<{ job: BackfillJob; revision: string }> {
-    const next: BackfillJob = { ...transform(state.job), updatedAt: Date.now() };
-    const res = await this.jobs.compareAndSet(JOB_ID, state.revision, next);
-    if (!res.applied) throw new LeaseLostError("job changed under us");
-    return { job: next, revision: res.revision };
+    return { done: state.phase !== "processing", processedThisBatch: handled };
   }
 
   /**

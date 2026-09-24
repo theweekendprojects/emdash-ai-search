@@ -20,13 +20,10 @@ export interface StorageCollection<T = unknown> {
     limit?: number;
     cursor?: string;
   }): Promise<{ items: Array<{ id: string; data: T }>; cursor?: string; hasMore: boolean }>;
-  /** Revision-based read + compare-and-set, for crash-safe lease claiming. */
-  getVersioned(id: string): Promise<{ value: T; revision: string } | null>;
-  compareAndSet(
-    id: string,
-    expectedRevision: string | null,
-    data: T,
-  ): Promise<{ applied: true; revision: string } | { applied: false }>;
+  // NOTE: the EmDash storage runtime does NOT provide compare-and-set /
+  // getVersioned (calling them throws at runtime), so they are intentionally
+  // NOT declared here. The backfill engine uses plain get/put with a soft
+  // timestamp lease instead.
 }
 
 export interface KVAccess {

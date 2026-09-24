@@ -51,6 +51,7 @@ export async function loadSettings(ctx: Ctx): Promise<SearchSettings> {
     showSearchModal: (await get<boolean>("showSearchModal", DEFAULT_SETTINGS.showSearchModal)) === true,
     snippetTheme: (await get("snippetTheme", DEFAULT_SETTINGS.snippetTheme)) as SearchSettings["snippetTheme"],
     snippetAccent: await get("snippetAccent", DEFAULT_SETTINGS.snippetAccent),
+    showManualDrain: (await get<boolean>("showManualDrain", DEFAULT_SETTINGS.showManualDrain)) === true,
   };
 }
 
@@ -85,6 +86,7 @@ export async function onInstall(ctx: Ctx): Promise<void> {
     "settings:showSearchModal": DEFAULT_SETTINGS.showSearchModal,
     "settings:snippetTheme": DEFAULT_SETTINGS.snippetTheme,
     "settings:snippetAccent": DEFAULT_SETTINGS.snippetAccent,
+    "settings:showManualDrain": DEFAULT_SETTINGS.showManualDrain,
   };
   for (const [k, v] of Object.entries(defaults)) {
     if ((await ctx.kv.get(k)) === null) await ctx.kv.set(k, v);
