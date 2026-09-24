@@ -17,7 +17,7 @@ import type { SearchBackend } from "./search-backend";
 import type { Ctx, StorageCollection } from "./host";
 import type { SearchFilters, SearchResponse, ChatResponse, IndexStatusRecord, ChatCitation } from "./types";
 import type { AiSearchClient, AiSearchChunk } from "./ai-search-client";
-import { contentHash, type DocState } from "./backfill-types";
+import { contentHash, extractIndexableText, type DocState } from "./backfill-types";
 
 /** Stable item key for a content entry in AI Search built-in storage. */
 export function pageKey(collectionId: string, contentId: string): string {
@@ -53,20 +53,53 @@ export class AiSearchBackend implements SearchBackend {
     if (!ctx.content) throw new Error("AI Search: content:read capability missing (ctx.content)");
   }
 
+  /**
+   * Build the public URL for a post using the site URL and content slug.
+   * Returns the full URL to the post on your site (e.g., https://yoursite.com/blog/my-post)
+   * so chat citations can link directly to your content instead of the .md file in AI Search.
+   */
+  private buildPublicUrl(collectionId: string, item: { data?: Record<string, unknown> }): string | undefined {
+    // Get the slug from content data
+    const slug = item.data?.slug || item.data?.url;
+    if (typeof slug !== "string" || !slug.trim()) return undefined;
+
+    // Get the site URL from Cloudflare bindings or env
+    const siteUrl = this.ctx.env?.site?.url;
+    if (!siteUrl) return undefined;
+
+    // Clean up the slug (remove leading/trailing slashes)
+    const cleanSlug = slug.replace(/^\/+|\/+$/g, "");
+
+    // Build the full URL
+    return `${siteUrl.replace(/\/+$/, "")}/${cleanSlug}`;
+  }
+
   async search(query: string, _filters?: SearchFilters, limit?: number): Promise<SearchResponse> {
     const start = Date.now();
     const r = await this.client.search(query, { maxNumResults: limit ?? this.opts.resultsLimit });
     // Dedupe chunks to one result per source document (item.key).
-    const byKey = new Map<string, { title: string; snippet: string; score: number }>();
+    const byKey = new Map<string, { title: string; snippet: string; score: number; publicUrl?: string }>();
     for (const c of r.chunks) {
       const key = c.item?.key ?? c.id;
       const prev = byKey.get(key);
       if (!prev || c.score > prev.score) {
-        byKey.set(key, { title: titleFromChunk(c), snippet: (c.text ?? "").slice(0, 500), score: c.score });
+        byKey.set(key, {
+          title: titleFromChunk(c),
+          snippet: (c.text ?? "").slice(0, 500),
+          score: c.score,
+          publicUrl: publicUrlFromChunk(c),
+        });
       }
     }
     const results = [...byKey.entries()]
-      .map(([key, v]) => ({ id: key, title: v.title, collectionId: collectionFromKey(key), snippet: v.snippet, score: v.score }))
+      .map(([key, v]) => ({
+        id: key,
+        title: v.title,
+        collectionId: collectionFromKey(key),
+        snippet: v.snippet,
+        score: v.score,
+        publicUrl: v.publicUrl,
+      }))
       .sort((a, b) => b.score - a.score);
     return { results, total: results.length, queryTimeMs: Date.now() - start };
   }
@@ -82,7 +115,13 @@ export class AiSearchBackend implements SearchBackend {
       const key = c.item?.key ?? c.id;
       const prev = byKey.get(key);
       if (!prev || c.score > prev.score) {
-        byKey.set(key, { contentId: idFromKey(key), title: titleFromChunk(c), collectionId: collectionFromKey(key), score: c.score });
+        byKey.set(key, {
+          contentId: idFromKey(key),
+          title: titleFromChunk(c),
+          collectionId: collectionFromKey(key),
+          score: c.score,
+          publicUrl: publicUrlFromChunk(c),
+        });
       }
     }
     return {
@@ -138,7 +177,20 @@ export class AiSearchBackend implements SearchBackend {
     // Built-in storage: an uploaded file is queued and indexed per file (no R2,
     // no 6h crawl/sync), so a publish becomes searchable on its own within
     // moments — not on a shared multi-hour schedule.
-    await this.client.uploadItem(pageKey(collectionId, contentId), content);
+    // Include the public post URL as metadata so chat citations link to your site.
+    const publicUrl = this.buildPublicUrl(collectionId, item);
+    const metadata: Record<string, string> = {};
+    if (publicUrl) {
+      metadata.publicUrl = publicUrl;
+      this.ctx.log.info("[ai-search] uploading with public URL metadata", {
+        collectionId,
+        contentId,
+        publicUrl,
+      });
+    }
+    await this.client.uploadItem(pageKey(collectionId, contentId), content, {
+      metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
+    });
     // Record what we indexed so future runs can skip it while unchanged.
     await this.docStates().put(docId, {
       docId,
@@ -220,21 +272,28 @@ function titleOf(item: { data?: Record<string, unknown> }): string {
   return typeof t === "string" && t.trim() ? t : "Untitled";
 }
 
-/** Render a content item to markdown for upload (front-matter-ish title + body). */
+/**
+ * Render a content item to markdown for upload (H1 title + body text).
+ *
+ * Uses `extractIndexableText`, the SAME walker `contentHash` hashes, so the text
+ * we upload matches the text we dedup on. Critically, EmDash rich fields (e.g. a
+ * `content` field of type `portableText`) are ARRAYS of block objects, not
+ * strings — the old string-only field scan silently dropped them and uploaded
+ * just the title, so AI Search only ever saw titles. Walking nested/array
+ * content fixes that: the full body ships to the index.
+ *
+ * `extractIndexableText` already pulls `title`/`name` from the data, but the
+ * data passed to `indexDocument` may carry a different/absent title than the
+ * resolved `title` arg (which falls back to "Untitled"), so we keep the H1 for a
+ * stable, greppable heading and de-duplicate a leading title echo.
+ */
 function renderMarkdown(title: string, data: Record<string, unknown>): string {
-  const parts: string[] = [`# ${title}`, ""];
-  for (const key of ["description", "summary", "content", "body", "text"]) {
-    const v = data?.[key];
-    if (typeof v === "string" && v.trim()) parts.push(v.trim(), "");
-  }
-  // Fallback: if none of the known fields had text, dump remaining string fields.
-  if (parts.length <= 2) {
-    for (const [k, v] of Object.entries(data ?? {})) {
-      if (typeof v === "string" && v.length > 10 && !v.startsWith("http") && !["id", "slug", "url"].includes(k)) {
-        parts.push(v, "");
-      }
-    }
-  }
+  const body = extractIndexableText(data ?? {});
+  // Drop a leading title line if extractIndexableText already emitted it, to
+  // avoid "# Title\n\nTitle\n\n…". Compare on the first non-empty text block.
+  const trimmedBody = body.startsWith(`${title}\n\n`) ? body.slice(title.length + 2) : body;
+  const parts = [`# ${title}`, ""];
+  if (trimmedBody.trim()) parts.push(trimmedBody.trim(), "");
   return parts.join("\n");
 }
 
@@ -246,6 +305,12 @@ function collectionFromKey(key: string): string {
 function idFromKey(key: string): string {
   const base = key.slice(key.indexOf("/") + 1);
   return base.replace(/\.md$/, "");
+}
+
+/** Read the publicUrl metadata off a chunk (metadata values are typed `unknown`). */
+function publicUrlFromChunk(c: AiSearchChunk): string | undefined {
+  const u = c.item?.metadata?.publicUrl;
+  return typeof u === "string" && u ? u : undefined;
 }
 
 function titleFromChunk(c: AiSearchChunk): string {
