@@ -56,14 +56,63 @@ async function render(ctx: Ctx, factory: BackendFactory, toast?: Blocks["toast"]
     });
   }
 
-  // ── Indexing settings ───────────────────────────────────────────────────────
+  // ── Connection settings (sensitive: LOCKED by default) ───────────────────────
+  // These fields hold the AI Search connection identity — instance name,
+  // Cloudflare account id, and API token. They are configured once and rarely
+  // change, and browser autofill/password managers love to overwrite them, so
+  // we DON'T expose editable inputs by default. Instead we show the current
+  // values read-only (token masked) and gate the actual inputs behind an
+  // "Edit connection settings" toggle (a client-side conditional field — no
+  // round-trip). With the toggle off the inputs aren't rendered at all, so a
+  // stray Save can't clobber a good token with an empty/autofilled value.
+  const tokenStored = !!settings.cfApiToken;
+  blocks.push({
+    type: "fields",
+    fields: [
+      { label: "AI Search instance", value: settings.aiSearchInstance || "— not set —" },
+      { label: "Cloudflare Account ID", value: settings.cfAccountId ? maskValue(settings.cfAccountId) : "— not set —" },
+      { label: "Cloudflare API Token", value: tokenStored ? "•••••••• (stored)" : "— not set —" },
+    ],
+  });
+  blocks.push({
+    type: "context",
+    text: "Connection settings are locked to prevent accidental overwrites (e.g. browser autofill). Toggle “Edit connection settings” below to change them.",
+  });
+
+  const EDIT = "editConnection"; // conditional-visibility switch action_id
+
   const fields: unknown[] = [
+    // The unlock switch. Default OFF → the sensitive inputs below stay hidden and
+    // the stored values are shown read-only above.
+    {
+      type: "toggle",
+      action_id: EDIT,
+      label: "Edit connection settings",
+      initial_value: false,
+    },
     {
       type: "text_input",
       action_id: "aiSearchInstance",
       label: "AI Search instance name",
       initial_value: settings.aiSearchInstance,
+      condition: { field: EDIT, eq: true },
     },
+    {
+      type: "text_input",
+      action_id: "cfAccountId",
+      label: "Cloudflare Account ID (sandboxed REST mode only)",
+      initial_value: settings.cfAccountId,
+      condition: { field: EDIT, eq: true },
+    },
+    {
+      type: "secret_input",
+      action_id: "cfApiToken",
+      label: tokenStored
+        ? "Cloudflare API Token (leave blank to keep the stored token)"
+        : "Cloudflare API Token (sandboxed REST mode only)",
+      condition: { field: EDIT, eq: true },
+    },
+    // Non-sensitive indexing settings — always editable.
     {
       type: "text_input",
       action_id: "selectedCollections",
@@ -90,17 +139,6 @@ async function render(ctx: Ctx, factory: BackendFactory, toast?: Blocks["toast"]
       max: 50,
       initial_value: settings.resultsLimit,
     },
-    {
-      type: "text_input",
-      action_id: "cfAccountId",
-      label: "Cloudflare Account ID (sandboxed REST mode only)",
-      initial_value: settings.cfAccountId,
-    },
-    {
-      type: "secret_input",
-      action_id: "cfApiToken",
-      label: "Cloudflare API Token (sandboxed REST mode only)",
-    },
   ];
 
   // ── Site UI: Cloudflare snippets ────────────────────────────────────────────
@@ -122,6 +160,12 @@ async function render(ctx: Ctx, factory: BackendFactory, toast?: Blocks["toast"]
       description: "Expected something like https://<id>.search.ai.cloudflare.com/ or a custom domain.",
     });
   }
+  // Show the current endpoint read-only; gate its input behind the same edit
+  // toggle so it isn't accidentally overwritten either.
+  blocks.push({
+    type: "fields",
+    fields: [{ label: "Public endpoint URL", value: settings.publicEndpointUrl || "— not set —" }],
+  });
 
   fields.push(
     {
@@ -130,6 +174,7 @@ async function render(ctx: Ctx, factory: BackendFactory, toast?: Blocks["toast"]
       label: "Public endpoint URL",
       placeholder: "https://<id>.search.ai.cloudflare.com/",
       initial_value: settings.publicEndpointUrl,
+      condition: { field: EDIT, eq: true },
     },
     {
       type: "toggle",
@@ -305,26 +350,46 @@ async function saveSettings(ctx: Ctx, v: Record<string, unknown>): Promise<void>
   const setIf = async (key: string, value: unknown) => {
     if (value !== undefined && value !== null) await ctx.kv.set(`settings:${key}`, value);
   };
-  await setIf("aiSearchInstance", v.aiSearchInstance);
-  await setIf("cfAccountId", v.cfAccountId);
-  // Only overwrite the token when the user typed a new one (secret fields come
-  // back empty when left untouched — don't clobber a stored token with "").
-  if (typeof v.cfApiToken === "string" && v.cfApiToken.length > 0) {
-    await ctx.kv.set("settings:cfApiToken", v.cfApiToken);
+
+  // Connection settings are only writable when the operator explicitly enabled
+  // "Edit connection settings". When the toggle is off, the host doesn't render
+  // those inputs, so they arrive undefined — but we double-guard here so a
+  // client that submits stale/autofilled values while locked can't overwrite
+  // the stored connection identity or token.
+  const editConnection = v.editConnection === true;
+  if (editConnection) {
+    await setIf("aiSearchInstance", v.aiSearchInstance);
+    await setIf("cfAccountId", v.cfAccountId);
+    // Only overwrite the token when the user typed a new one (secret fields come
+    // back empty when left untouched — don't clobber a stored token with "").
+    if (typeof v.cfApiToken === "string" && v.cfApiToken.length > 0) {
+      await ctx.kv.set("settings:cfApiToken", v.cfApiToken);
+    }
+    await setIf(
+      "publicEndpointUrl",
+      typeof v.publicEndpointUrl === "string" ? v.publicEndpointUrl.trim() : v.publicEndpointUrl,
+    );
   }
+
   await setIf("resultsLimit", Number(v.resultsLimit ?? 20));
   await ctx.kv.set("settings:selectedCollections", normalizeCollections(v.selectedCollections));
   await ctx.kv.set("settings:indexDrafts", v.indexDrafts === true);
   await ctx.kv.set("settings:forceReindex", v.forceReindex === true);
 
   // Site UI snippets
-  await setIf("publicEndpointUrl", typeof v.publicEndpointUrl === "string" ? v.publicEndpointUrl.trim() : v.publicEndpointUrl);
   await ctx.kv.set("settings:showChatBubble", v.showChatBubble === true);
   await ctx.kv.set("settings:showSearchModal", v.showSearchModal === true);
   if (v.snippetTheme === "auto" || v.snippetTheme === "light" || v.snippetTheme === "dark") {
     await ctx.kv.set("settings:snippetTheme", v.snippetTheme);
   }
   await setIf("snippetAccent", v.snippetAccent);
+}
+
+/** Mask a mostly-sensitive identifier for read-only display (keep a short tail). */
+function maskValue(v: string): string {
+  const s = String(v);
+  if (s.length <= 4) return "••••";
+  return `${"•".repeat(Math.max(4, s.length - 4))}${s.slice(-4)}`;
 }
 
 function normalizeCollections(input: unknown): string {
