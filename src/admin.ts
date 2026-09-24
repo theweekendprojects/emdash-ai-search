@@ -66,6 +66,10 @@ async function render(ctx: Ctx, factory: BackendFactory, toast?: Blocks["toast"]
   // round-trip). With the toggle off the inputs aren't rendered at all, so a
   // stray Save can't clobber a good token with an empty/autofilled value.
   const tokenStored = !!settings.cfApiToken;
+
+  // Give the connection block its own heading so the lock reads as a distinct
+  // section, not just another setting in the list.
+  blocks.push({ type: "header", text: "Connection settings" });
   blocks.push({
     type: "fields",
     fields: [
@@ -74,20 +78,26 @@ async function render(ctx: Ctx, factory: BackendFactory, toast?: Blocks["toast"]
       { label: "Cloudflare API Token", value: tokenStored ? "•••••••• (stored)" : "— not set —" },
     ],
   });
+  // A colored banner (not muted help text) so the locked state is obvious and
+  // the reader knows where the unlock is.
   blocks.push({
-    type: "context",
-    text: "Connection settings are locked to prevent accidental overwrites (e.g. browser autofill). Toggle “Edit connection settings” below to change them.",
+    type: "banner",
+    variant: "default",
+    title: "🔒 Connection settings are locked",
+    description:
+      "Shown read-only to prevent accidental overwrites (e.g. browser autofill). Turn on “Edit connection settings” just below to change the instance, account ID, API token, or endpoint URL.",
   });
 
   const EDIT = "editConnection"; // conditional-visibility switch action_id
 
   const fields: unknown[] = [
     // The unlock switch. Default OFF → the sensitive inputs below stay hidden and
-    // the stored values are shown read-only above.
+    // the stored values are shown read-only above. Labelled explicitly as the
+    // unlock so it stands apart from the ordinary setting toggles.
     {
       type: "toggle",
       action_id: EDIT,
-      label: "Edit connection settings",
+      label: "🔓 Edit connection settings (unlock the fields below)",
       initial_value: false,
     },
     {
