@@ -93,6 +93,8 @@ export interface ChatCitation {
   title: string;
   collectionId: string;
   score: number;
+  /** Public URL to the original post on your site. */
+  publicUrl?: string;
 }
 
 export interface ChatResponse {

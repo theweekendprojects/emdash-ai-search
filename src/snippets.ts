@@ -63,9 +63,19 @@ export function normalizeEndpoint(raw: string): string | null {
   return url.origin + "/";
 }
 
-/** The snippet library script URL for a given endpoint origin. */
+/**
+ * The snippet library script URL.
+ * 
+ * For production, use Cloudflare's CDN (default).
+ * For customization, bundle the snippet in the plugin and use a local path:
+ *   return '/_emdash/plugins/ai-search/snippets/search-snippet.es.js';
+ */
 export function snippetScriptSrc(endpointOrigin: string): string {
+  // Option 1: Use Cloudflare's CDN (current - no worker changes needed)
   return `${endpointOrigin}assets/${SNIPPET_VERSION}/search-snippet.es.js`;
+  
+  // Option 2: Use local bundled snippet (if you fork and include in plugin)
+  // return '/_emdash/plugins/ai-search/snippets/search-snippet.es.js';
 }
 
 /**

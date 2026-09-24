@@ -46,8 +46,10 @@ export interface AiSearchClient {
    * storage is indexed IMMEDIATELY per file (no 6h sync job, no R2, no crawl),
    * which is exactly what we want for publish-time freshness. `key` is the
    * stable filename (e.g. "posts/<id>.md").
+   * 
+   * Custom metadata can be attached for filtering and linking purposes.
    */
-  uploadItem(key: string, content: string): Promise<void>;
+  uploadItem(key: string, content: string, opts?: { metadata?: Record<string, string> }): Promise<void>;
   /** Delete a document by its `key`. No-ops if the key isn't present. */
   deleteItemByKey(key: string): Promise<void>;
 }
@@ -121,10 +123,14 @@ export class RestAiSearchClient implements AiSearchClient {
     yield* sseTextDeltas(res); // ignores the leading `event: chunks`, yields deltas
   }
 
-  async uploadItem(key: string, content: string): Promise<void> {
+  async uploadItem(key: string, content: string, opts?: { metadata?: Record<string, string> }): Promise<void> {
     // Items REST API: multipart upload to the instance's built-in storage.
     const form = new FormData();
     form.append("file", new Blob([content], { type: "text/markdown" }), key);
+    if (opts?.metadata) {
+      // Add metadata as JSON string field
+      form.append("metadata", JSON.stringify(opts.metadata));
+    }
     const res = await this.http.fetch(`${this.base()}/items`, {
       method: "POST",
       headers: { Authorization: `Bearer ${this.apiToken}` },
@@ -246,8 +252,8 @@ export class BindingAiSearchClient implements AiSearchClient {
     };
   }
 
-  async uploadItem(key: string, content: string): Promise<void> {
-    await this.instance.items.upload(key, content);
+  async uploadItem(key: string, content: string, opts?: { metadata?: Record<string, string> }): Promise<void> {
+    await this.instance.items.upload(key, content, opts ? { metadata: opts.metadata } : undefined);
   }
 
   async deleteItemByKey(key: string): Promise<void> {
