@@ -38,6 +38,15 @@ export interface SearchSettings {
   snippetTheme: "auto" | "light" | "dark";
   /** Optional accent color (hex) applied to the snippets via CSS var. */
   snippetAccent: string;
+
+  // ── Ops ─────────────────────────────────────────────────────────────────────
+  /**
+   * Show a "Run backfill batch now" button in the admin, letting an operator
+   * drain one batch by hand. Useful when the host's cron dispatch isn't
+   * advancing the backfill on its own (the scheduled drain relies on the `cron`
+   * hook firing into the plugin). Default off.
+   */
+  showManualDrain: boolean;
 }
 
 export const DEFAULT_SETTINGS: SearchSettings = {
@@ -51,6 +60,7 @@ export const DEFAULT_SETTINGS: SearchSettings = {
   showSearchModal: false,
   snippetTheme: "auto",
   snippetAccent: "",
+  showManualDrain: false,
 };
 
 export interface IndexStatusRecord {

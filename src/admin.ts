@@ -12,7 +12,7 @@
 
 import type { Ctx } from "./services/host";
 import type { BackendFactory } from "./core";
-import { loadSettings, routeIndex, startBackfill, cancelBackfill, backfillStatus } from "./core";
+import { loadSettings, routeIndex, startBackfill, cancelBackfill, backfillStatus, onCron } from "./core";
 import { normalizeEndpoint } from "./snippets";
 
 type Blocks = { blocks: unknown[]; toast?: { message: string; type: "success" | "error" | "info" } };
@@ -217,6 +217,12 @@ async function render(ctx: Ctx, factory: BackendFactory, toast?: Blocks["toast"]
       label: "Accent color (hex, optional)",
       initial_value: settings.snippetAccent,
     },
+    {
+      type: "toggle",
+      action_id: "showManualDrain",
+      label: "Show manual backfill drain button (use if scheduled backfill isn't advancing)",
+      initial_value: settings.showManualDrain,
+    },
   );
 
   blocks.push({ type: "form", block_id: "settings", fields, submit: { label: "Save settings", action_id: "save_settings" } });
@@ -273,6 +279,20 @@ async function render(ctx: Ctx, factory: BackendFactory, toast?: Blocks["toast"]
       elements: [
         { type: "button", label: "Start backfill (selected collections)", action_id: "backfill_start", style: "primary" },
       ],
+    });
+  }
+
+  // Manual drain (opt-in). The scheduled backfill relies on the host's `cron`
+  // hook firing into the plugin; where that isn't advancing, an operator can run
+  // one batch by hand. Only shown when enabled in settings AND a job is active.
+  if (settings.showManualDrain && job && job.phase === "processing") {
+    blocks.push({
+      type: "context",
+      text: "Scheduled drain not advancing? Run one batch (up to 25 docs) now. Click repeatedly until the backfill reads “done”.",
+    });
+    blocks.push({
+      type: "actions",
+      elements: [{ type: "button", label: "Run backfill batch now", action_id: "backfill_drain", style: "primary" }],
     });
   }
 
@@ -404,6 +424,17 @@ export async function handleAdmin(ctx: Ctx, factory: BackendFactory, rawInput: u
         await cancelBackfill(ctx, factory);
         return render(ctx, factory, { message: "Backfill cancelled.", type: "info" });
       }
+      if (actionId === "backfill_drain") {
+        // Run one batch by hand (same code path the cron drain would use).
+        await onCron(ctx, factory, "manual");
+        const job = await backfillStatus(ctx, factory);
+        const msg = job
+          ? job.phase === "done"
+            ? `Backfill complete — uploaded ${job.processed}, skipped ${job.skipped}, removed ${job.removed}.`
+            : `Batch done — uploaded ${job.processed} so far, ${job.queue.length} collection(s) left. Click again to continue.`
+          : "No active backfill.";
+        return render(ctx, factory, { message: msg, type: "success" });
+      }
       if (actionId.startsWith("reindex:")) {
         const collectionId = actionId.slice("reindex:".length);
         const result = await routeIndex(ctx, factory, { collectionId, force });
@@ -461,6 +492,7 @@ async function saveSettings(ctx: Ctx, v: Record<string, unknown>): Promise<void>
     await ctx.kv.set("settings:snippetTheme", v.snippetTheme);
   }
   await setIf("snippetAccent", v.snippetAccent);
+  await ctx.kv.set("settings:showManualDrain", v.showManualDrain === true);
 }
 
 /** Mask a mostly-sensitive identifier for read-only display (keep a short tail). */
