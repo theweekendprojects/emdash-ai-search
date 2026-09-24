@@ -19,6 +19,8 @@ type Blocks = { blocks: unknown[]; toast?: { message: string; type: "success" | 
 
 interface Interaction {
   type: "page_load" | "block_action" | "form_submit";
+  /** For page_load: which surface — the settings page, or "widget:<id>". */
+  page?: string;
   action_id?: string;
   block_id?: string;
   value?: unknown;
@@ -309,11 +311,77 @@ async function render(ctx: Ctx, factory: BackendFactory, toast?: Blocks["toast"]
   return toast ? { blocks, toast } : { blocks };
 }
 
+/**
+ * Dashboard widget (`ai-search-status`) — a SMALL, CHEAP status card.
+ *
+ * The admin dashboard requests this on every load via
+ * `{ type: "page_load", page: "widget:ai-search-status" }`. It must NOT run the
+ * full settings `render()` (backend build + all settings + backfill status +
+ * ~40 blocks); doing so made the whole dashboard wait ~1.4s on this one widget.
+ *
+ * Here we do the minimum: a couple of KV reads (loadSettings is KV-only and
+ * cheap) plus the backfill phase, and return a compact card with a link to the
+ * full settings page. No `factory.build()`, no heavy assembly.
+ */
+async function renderWidget(ctx: Ctx): Promise<Blocks> {
+  const settings = await loadSettings(ctx);
+
+  // Read the backfill job record straight from storage — cheaper than building
+  // a backend + BackfillService just to read one row.
+  let phase = "idle";
+  let processed = 0;
+  try {
+    const jobs = ctx.storage?.backfill_job;
+    const job = jobs ? ((await jobs.get("current")) as { phase?: string; processed?: number } | null) : null;
+    if (job) {
+      phase = job.phase ?? "idle";
+      processed = job.processed ?? 0;
+    }
+  } catch {
+    // Non-fatal for a status card — leave defaults.
+  }
+
+  const configured = !!settings.aiSearchInstance;
+  const endpointOk = !!normalizeEndpoint(settings.publicEndpointUrl);
+
+  const blocks: unknown[] = [
+    {
+      type: "fields",
+      fields: [
+        { label: "Instance", value: settings.aiSearchInstance || "— not set —" },
+        { label: "Public UI", value: endpointOk ? "configured" : "not configured" },
+        { label: "Indexed collections", value: settings.selectedCollections.length ? settings.selectedCollections.join(", ") : "all" },
+        { label: "Backfill", value: phase === "processing" ? `running (${processed} uploaded)` : phase },
+      ],
+    },
+    {
+      type: "context",
+      text: "Manage indexing and connection settings from the “AI Search” item in the Plugins sidebar.",
+    },
+  ];
+
+  if (!configured) {
+    blocks.unshift({
+      type: "banner",
+      variant: "default",
+      title: "Not configured yet",
+      description: "Set the AI Search instance and public endpoint in settings.",
+    });
+  }
+
+  return { blocks };
+}
+
 /** The admin route entry point — call from both plugin entries. */
 export async function handleAdmin(ctx: Ctx, factory: BackendFactory, rawInput: unknown): Promise<Blocks> {
   const interaction = (rawInput ?? { type: "page_load" }) as Interaction;
 
   try {
+    // Dashboard widget: cheap status card, NOT the full settings render.
+    if (interaction.type === "page_load" && typeof interaction.page === "string" && interaction.page.startsWith("widget:")) {
+      return renderWidget(ctx);
+    }
+
     if (interaction.type === "form_submit" && interaction.action_id === "save_settings") {
       const v = interaction.values ?? {};
       await saveSettings(ctx, v);
