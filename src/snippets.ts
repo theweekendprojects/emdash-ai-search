@@ -103,7 +103,26 @@ export function buildSnippetFragments(settings: SearchSettings): PageFragment[] 
     markup += `<search-modal-snippet api-url="${attr(endpoint)}" theme="${attr(theme)}" placeholder="Search…"></search-modal-snippet>`;
   }
 
+  // Preconnect to the AI Search public endpoint so the browser warms the
+  // DNS + TLS handshake to that cross-origin host early, in parallel with the
+  // rest of the page. The snippet library (`search-snippet.es.js`) is a
+  // deferred `type="module"` loaded at body:end, so it never blocks paint — but
+  // without this hint the browser only discovers its origin when it reaches that
+  // tag, then pays a fresh cold connection (DNS + TLS), which is typically the
+  // longest single leg of the page's request graph. Emitting the preconnect in
+  // <head> overlaps that handshake with earlier work and removes it from the
+  // snippet's critical path. The origin is derived from the configured endpoint
+  // (no hardcoding); `crossorigin` matches the module script's CORS fetch so the
+  // warmed connection is actually reused.
+  const endpointOrigin = new URL(endpoint).origin;
+
   return [
+    {
+      kind: "html",
+      placement: "head",
+      html: `<link rel="preconnect" href="${attr(endpointOrigin)}" crossorigin>`,
+      key: "cf-ai-search-preconnect",
+    },
     {
       kind: "external-script",
       placement: "body:end",
